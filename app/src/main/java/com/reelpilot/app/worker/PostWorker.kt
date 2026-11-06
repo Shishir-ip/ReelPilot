@@ -46,7 +46,7 @@ class PostWorker(context: Context, params: WorkerParameters) :
         return Result.success()
     }
 
-    override fun getForegroundInfo(): ForegroundInfo {
+    override suspend fun getForegroundInfo(): ForegroundInfo {
         val notif = NotificationCompat.Builder(applicationContext, "posts")
             .setContentTitle("ReelPilot posting…")
             .setContentText("Waking Instagram to share your reel")
@@ -117,7 +117,7 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 }
                 ctx.startActivity(intent)
 
-                val (ok, msg) = resultDeferred.await()
+                val (ok, msg) = resultDeferred!!.await()
                 AppLog.log("POST", "Result: ok=$ok, $msg")
 
                 if (ok) {
