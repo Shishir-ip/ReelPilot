@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.reelpilot.app.data.AppDatabase
 import com.reelpilot.app.data.QueueItem
+import com.reelpilot.app.data.SettingsRepo
 import com.reelpilot.app.data.Status
 import com.reelpilot.app.worker.PostWorker
 import kotlinx.coroutines.launch
@@ -61,7 +62,15 @@ fun QueueScreen() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Queue", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            TextButton(onClick = { scope.launch { dao.clearPosted() } }) { Text("Clear posted") }
+            TextButton(onClick = {
+                scope.launch {
+                    dao.clearPosted()
+                    // Reset the interval clock so the next downloaded item
+                    // posts immediately, and the one after follows the interval.
+                    SettingsRepo.get(context).setNextPostAt(0)
+                    PostWorker.scheduleOneTime(context, forceNow = true)
+                }
+            }) { Text("Clear posted") }
         }
 
         if (items.isEmpty()) {

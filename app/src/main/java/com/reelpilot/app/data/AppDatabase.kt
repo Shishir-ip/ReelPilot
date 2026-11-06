@@ -55,6 +55,12 @@ interface QueueDao {
     @Query("SELECT COUNT(*) FROM queue WHERE status = 'READY'")
     fun readyCountFlow(): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM queue WHERE url = :url AND status IN ('QUEUED','DOWNLOADING','READY','POSTING')")
+    suspend fun activeCountForUrl(url: String): Int
+
+    @Query("SELECT COUNT(*) FROM queue WHERE status = 'POSTED'")
+    suspend fun postedCount(): Int
+
     @Insert
     suspend fun insert(item: QueueItem): Long
 

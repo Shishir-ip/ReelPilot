@@ -11,6 +11,7 @@ import com.reelpilot.app.data.QueueItem
 import com.reelpilot.app.data.SettingsRepo
 import com.reelpilot.app.util.AppLog
 import com.reelpilot.app.worker.DownloadWorker
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 
 /**
@@ -27,8 +28,13 @@ object TelegramIngest {
 
     private const val MAX_BOT_FILE = 20L * 1024 * 1024
 
+    // The service and the posting worker both poll; this lock guarantees only
+    // one fetch/process cycle runs at a time so an update can never be
+    // processed twice (the cause of duplicate downloads).
+    private val pollMutex = kotlinx.coroutines.sync.Mutex()
+
     /** Fetch and process any pending Telegram updates. Returns count processed. */
-    suspend fun poll(context: Context): Int {
+    suspend fun poll(context: Context): Int = pollMutex.withLock {
         val settings = SettingsRepo.get(context).current()
         if (settings.botToken.isBlank()) return 0
         var cursor = loadOffset(context)
@@ -45,7 +51,7 @@ object TelegramIngest {
         } catch (e: Exception) {
             AppLog.log("TG", "poll failed: ${e.message}")
         }
-        return processed
+        processed
     }
 
     private suspend fun handleUpdate(
@@ -132,6 +138,12 @@ object TelegramIngest {
         dao: QueueDao,
         item: QueueItem
     ) {
+        // Dedupe: never queue the same link/file twice while it's still active.
+        if (dao.activeCountForUrl(item.url) > 0) {
+            client.sendMessage(item.chatId, "ℹ️ Already in the queue: ${item.title}")
+            AppLog.log("TG", "Duplicate skipped: ${item.title}")
+            return
+        }
         val id = dao.insert(item)
         WorkManager.getInstance(context).enqueue(
             OneTimeWorkRequestBuilder<DownloadWorker>()

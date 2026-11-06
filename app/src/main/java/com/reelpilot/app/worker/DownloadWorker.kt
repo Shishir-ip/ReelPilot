@@ -42,8 +42,15 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
             dao.update(item.copy(status = Status.READY, localUri = uri, progress = 100))
 
             val s = SettingsRepo.get(applicationContext).current()
-            val whenText = if (s.nextPostAt > System.currentTimeMillis())
-                SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(s.nextPostAt))
+            // Fresh/cleared queue (nothing ever posted) → next post happens
+            // immediately instead of waiting out the old interval.
+            val freshQueue = dao.postedCount() == 0
+            if (freshQueue && s.nextPostAt > System.currentTimeMillis()) {
+                SettingsRepo.get(applicationContext).setNextPostAt(0)
+            }
+            val effectiveNext = if (freshQueue) 0L else s.nextPostAt
+            val whenText = if (effectiveNext > System.currentTimeMillis())
+                SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(effectiveNext))
             else "as soon as possible"
             TelegramClient(s.botToken).sendMessage(
                 item.chatId,
