@@ -142,8 +142,13 @@ class ReelAccessibilityService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, 150))
             .build()
         dispatchGesture(gesture, object : GestureResultCallback() {
-            override fun onCompleted(gestureDescription: GestureDescription?) = latch.complete(true)
-            override fun onCancelled(gestureDescription: GestureDescription?) = latch.complete(false)
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                latch.complete(true)
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                latch.complete(false)
+            }
         }, null)
         return latch.await()
     }

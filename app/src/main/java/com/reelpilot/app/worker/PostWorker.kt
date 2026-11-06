@@ -95,7 +95,6 @@ class PostWorker(context: Context, params: WorkerParameters) :
             }
         } finally {
             busy.set(false)
-            force = false
         }
         return Result.success()
     }

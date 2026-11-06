@@ -20,7 +20,7 @@ class TelegramClient(private val token: String) {
         .readTimeout(40, TimeUnit.SECONDS)
         .build()
 
-    private fun api(method: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun api(method: String, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
         val req = Request.Builder()
             .url("https://api.telegram.org/bot$token/$method")
             .post(body.toString().toRequestBody("application/json".toMediaType()))

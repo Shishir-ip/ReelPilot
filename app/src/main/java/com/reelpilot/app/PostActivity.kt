@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Bundle
 import com.reelpilot.app.accessibility.ReelAccessibilityService
 import com.reelpilot.app.util.AppLog
+import com.reelpilot.app.worker.PostWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
