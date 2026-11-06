@@ -53,6 +53,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- WorkManager's internal foreground service (expedited post runs) -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
         <service
             android:name=".accessibility.ReelAccessibilityService"
             android:exported="false"
