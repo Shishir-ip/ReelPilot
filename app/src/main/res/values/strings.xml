@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">ReelPilot</string>
+    <string name="accessibility_desc">ReelPilot needs this permission to post your queued reels automatically. It taps the Instagram app on your behalf — nothing else is controlled or read.</string>
+</resources>

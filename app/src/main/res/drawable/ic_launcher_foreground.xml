@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Film-reel / play glyph -->
+    <group
+        android:scaleX="0.5"
+        android:scaleY="0.5"
+        android:translateX="27"
+        android:translateY="27">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M54,4C26.5,4 4,26.5 4,54s22.5,50 50,50s50,-22.5 50,-50S81.5,4 54,4zM54,12c6.6,0 12,5.4 12,12s-5.4,12 -12,12s-12,-5.4 -12,-12S47.4,12 54,12zM24,66c-6.6,0 -12,-5.4 -12,-12s5.4,-12 12,-12s12,5.4 12,12S30.6,66 24,66zM54,96c-6.6,0 -12,-5.4 -12,-12s5.4,-12 12,-12s12,5.4 12,12S60.6,96 54,96zM62.5,50.4L92.3,67.6c1.1,0.6 1.1,2.2 0,2.8L62.5,87.6c-1.1,0.6 -2.5,-0.2 -2.5,-1.4L60,51.8C60,50.6 61.4,49.8 62.5,50.4z" />
+    </group>
+</vector>
