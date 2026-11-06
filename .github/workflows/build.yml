@@ -19,6 +19,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Python 3.11 (Chaquopy buildPython)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Accept Android SDK licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
 
