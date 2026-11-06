@@ -15,6 +15,11 @@
         android:maxSdkVersion="28"
         tools:ignore="ScopedStorage" />
 
+    <!-- Android 11+ package visibility: lets the app detect Instagram and share into it -->
+    <queries>
+        <package android:name="com.instagram.android" />
+    </queries>
+
     <application
         android:name=".ReelPilotApp"
         android:allowBackup="true"

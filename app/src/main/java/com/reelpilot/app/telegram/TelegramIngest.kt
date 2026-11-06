@@ -57,9 +57,14 @@ object TelegramIngest {
         val msg = update.optJSONObject("message") ?: return false
         val from = msg.optJSONObject("from")?.optLong("id") ?: return false
         val chat = msg.optJSONObject("chat")?.optLong("id") ?: return false
-        val allowed = settings.allowedUsers
 
-        // Zero-config: the very first user who messages the bot becomes the owner.
+        if (settings.allowAnyone) {
+            // Open mode: any Telegram account can send links (default).
+            return handleAuthorized(context, client, msg, chat)
+        }
+
+        // Restricted mode: whitelist only; the first user auto-claims ownership.
+        val allowed = settings.allowedUsers
         if (allowed.isEmpty()) {
             SettingsRepo.get(context).addAllowedUser(from.toString())
             client.sendMessage(chat, "👋 ReelPilot setup complete: you are now the only user who can queue posts.\n\nSend me any video link (YouTube, TikTok, Twitter...) and I'll download it and post it to Instagram as a reel on your schedule.\n\nTip: video files up to 20 MB work too — for bigger ones, send a link.")
@@ -108,7 +113,9 @@ object TelegramIngest {
                 enqueue(context, client, dao, QueueItem(
                     source = "link", url = url,
                     title = "Link: ${url.take(80)}",
-                    caption = text.replaceFirst(URL_REGEX, "").trim().ifBlank { text.trim() }.take(200),
+                    // Caption = message text with the URL stripped out, so the
+                    // reel doesn't get captioned with the raw link.
+                    caption = text.replaceFirst(URL_REGEX, "").trim().take(200),
                     chatId = chat
                 ))
                 return true

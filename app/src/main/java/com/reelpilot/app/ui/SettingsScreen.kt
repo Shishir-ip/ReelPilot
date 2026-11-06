@@ -46,6 +46,7 @@ fun SettingsScreen() {
     var token by remember(settings.botToken) { mutableStateOf(settings.botToken) }
     var caption by remember(settings.caption) { mutableStateOf(settings.caption) }
     var interval by remember(settings.intervalHours) { mutableStateOf(settings.intervalHours) }
+    var anyone by remember(settings.allowAnyone) { mutableStateOf(settings.allowAnyone) }
 
     Column(
         modifier = Modifier
@@ -73,6 +74,21 @@ fun SettingsScreen() {
             modifier = Modifier.fillMaxWidth(),
             minLines = 2
         )
+
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.weight(1f)) {
+                Text("Accept links from anyone", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Any Telegram account that messages the bot can queue posts",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            androidx.compose.material3.Switch(
+                checked = anyone,
+                onCheckedChange = { anyone = it }
+            )
+        }
 
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -106,6 +122,7 @@ fun SettingsScreen() {
                     SettingsRepo.get(context).setBotToken(token)
                     SettingsRepo.get(context).setCaption(caption)
                     SettingsRepo.get(context).setIntervalHours(interval)
+                    SettingsRepo.get(context).setAllowAnyone(anyone)
                     if (token.isNotBlank()) TgPollService.start(context)
                     snackbar.showSnackbar("Saved ✓")
                 }

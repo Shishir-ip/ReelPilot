@@ -16,6 +16,7 @@ private val Context.dataStore by preferencesDataStore(name = "reelpilot_settings
 data class AppSettings(
     val botToken: String = "",
     val allowedUsers: Set<String> = emptySet(),
+    val allowAnyone: Boolean = true,
     val intervalHours: Int = 2,
     val caption: String = "",
     val autoPost: Boolean = true,
@@ -27,6 +28,7 @@ class SettingsRepo(private val context: Context) {
     private object Keys {
         val TOKEN = stringPreferencesKey("bot_token")
         val USERS = stringPreferencesKey("allowed_users")
+        val ALLOW_ANYONE = booleanPreferencesKey("allow_anyone")
         val INTERVAL = intPreferencesKey("interval_hours")
         val CAPTION = stringPreferencesKey("caption")
         val AUTO_POST = booleanPreferencesKey("auto_post")
@@ -39,6 +41,7 @@ class SettingsRepo(private val context: Context) {
             allowedUsers = (p[Keys.USERS] ?: "").split(",").mapNotNull {
                 it.trim().takeIf { s -> s.isNotEmpty() }
             }.toSet(),
+            allowAnyone = p[Keys.ALLOW_ANYONE] ?: true,
             intervalHours = p[Keys.INTERVAL] ?: 2,
             caption = p[Keys.CAPTION] ?: "",
             autoPost = p[Keys.AUTO_POST] ?: true,
@@ -49,6 +52,7 @@ class SettingsRepo(private val context: Context) {
     suspend fun current(): AppSettings = flow.first()
 
     suspend fun setBotToken(v: String) = context.dataStore.edit { it[Keys.TOKEN] = v.trim() }
+    suspend fun setAllowAnyone(v: Boolean) = context.dataStore.edit { it[Keys.ALLOW_ANYONE] = v }
     suspend fun setAllowedUsers(v: Set<String>) =
         context.dataStore.edit { it[Keys.USERS] = v.joinToString(",") }
     suspend fun addAllowedUser(id: String) {

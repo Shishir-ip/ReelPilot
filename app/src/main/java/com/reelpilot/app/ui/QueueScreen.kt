@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import com.reelpilot.app.data.AppDatabase
 import com.reelpilot.app.data.QueueItem
 import com.reelpilot.app.data.Status
+import com.reelpilot.app.worker.PostWorker
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -85,7 +86,12 @@ fun QueueScreen() {
                 items(items, key = { it.id }) { item ->
                     QueueCard(
                         item = item,
-                        onRetry = { scope.launch { dao.retry(item.id) } },
+                        onRetry = {
+                            scope.launch {
+                                dao.retry(item.id)
+                                PostWorker.scheduleOneTime(context, forceNow = true)
+                            }
+                        },
                         onDelete = { scope.launch { dao.delete(item.id) } }
                     )
                 }

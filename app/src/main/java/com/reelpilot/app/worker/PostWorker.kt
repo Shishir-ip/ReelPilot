@@ -56,7 +56,10 @@ class PostWorker(context: Context, params: WorkerParameters) :
             }
             if (!isInstagramInstalled(ctx)) {
                 dao.update(item.copy(status = Status.FAILED, error = "Instagram app not installed"))
-                TelegramClient(settings.botToken).sendMessage(item.chatId, "❌ Instagram is not installed on this phone.")
+                TelegramClient(settings.botToken).sendMessage(
+                    item.chatId,
+                    "❌ Instagram is not installed on this phone.\nInstall Instagram, log in once, then tap ↻ Retry on this item in the app's Queue tab."
+                )
                 return Result.success()
             }
 
