@@ -34,6 +34,7 @@ data class QueueItem(
     val status: String = Status.QUEUED,
     val progress: Int = 0,              // download progress 0..100
     val localUri: String? = null,       // MediaStore content uri once downloaded
+    val postAt: Long = 0,               // scheduled upload time (0 = automatic slot)
     val error: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
@@ -45,6 +46,15 @@ interface QueueDao {
 
     @Query("SELECT * FROM queue WHERE status = :status ORDER BY createdAt ASC LIMIT 1")
     suspend fun oldestWithStatus(status: String): QueueItem?
+
+    @Query("SELECT * FROM queue WHERE status = :status ORDER BY createdAt ASC")
+    suspend fun byStatus(status: String): List<QueueItem>
+
+    @Query("SELECT * FROM queue WHERE status = 'READY' AND postAt > 0 AND postAt <= :now ORDER BY postAt ASC LIMIT 1")
+    suspend fun dueReady(now: Long): QueueItem?
+
+    @Query("UPDATE queue SET postAt = :postAt WHERE id = :id")
+    suspend fun setPostAt(id: Long, postAt: Long)
 
     @Query("SELECT * FROM queue WHERE id = :id")
     suspend fun byId(id: Long): QueueItem?
@@ -73,11 +83,11 @@ interface QueueDao {
     @Query("DELETE FROM queue WHERE status = 'POSTED'")
     suspend fun clearPosted()
 
-    @Query("UPDATE queue SET status = 'READY', error = NULL, progress = 100 WHERE id = :id")
+    @Query("UPDATE queue SET status = 'READY', error = NULL, progress = 100, postAt = 0 WHERE id = :id")
     suspend fun retry(id: Long)
 }
 
-@Database(entities = [QueueItem::class], version = 1, exportSchema = false)
+@Database(entities = [QueueItem::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun queueDao(): QueueDao
 
@@ -85,13 +95,21 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var instance: AppDatabase? = null
 
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE queue ADD COLUMN postAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "reelpilot.db"
-                ).build().also { instance = it }
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .build().also { instance = it }
             }
     }
 }

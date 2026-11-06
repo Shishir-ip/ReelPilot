@@ -87,11 +87,15 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 TelegramIngest.poll(ctx)
 
                 if (!settings.autoPost) return
-                val now = System.currentTimeMillis()
-                if (settings.nextPostAt > now && !forceNow) return
 
+                // Assign slots to any newly downloaded items, then pick the
+                // one whose scheduled time has arrived.
+                QueueScheduler.reschedule(ctx)
                 val dao = AppDatabase.get(ctx).queueDao()
-                val item = dao.oldestWithStatus(Status.READY) ?: return
+                val now = System.currentTimeMillis()
+                val item = dao.dueReady(now)
+                    ?: (if (forceNow) dao.oldestWithStatus(Status.READY) else null)
+                    ?: return
 
                 if (!ReelAccessibilityService.isServiceEnabled(ctx)) {
                     AppLog.log("POST", "Skipped — accessibility service not enabled yet")
@@ -137,6 +141,8 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     TelegramClient(settings.botToken)
                         .sendMessage(item.chatId, "⚠️ Posting failed: $msg\nIt will not be retried automatically — retry it from the app queue.")
                 }
+                // Re-slot the remaining queue after this post / failure.
+                QueueScheduler.reschedule(ctx)
             } finally {
                 busy.set(false)
             }

@@ -124,6 +124,9 @@ fun SettingsScreen() {
                     SettingsRepo.get(context).setIntervalHours(interval)
                     SettingsRepo.get(context).setAllowAnyone(anyone)
                     if (token.isNotBlank()) TgPollService.start(context)
+                    // Interval changed → re-slot every waiting video.
+                    com.reelpilot.app.worker.QueueScheduler.reschedule(context)
+                    com.reelpilot.app.worker.PostWorker.scheduleOneTime(context, expedited = true)
                     snackbar.showSnackbar("Saved ✓")
                 }
             },
