@@ -56,7 +56,9 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
                 item.chatId,
                 "✅ Downloaded: ${item.title}\n⏰ Will post at: $whenText"
             )
-            PostWorker.scheduleOneTime(applicationContext)
+            // Post right away when it's due (first post / elapsed interval);
+            // later queued items still wait for the configured interval.
+            PostWorker.scheduleOneTime(applicationContext, expedited = true)
         } catch (e: Exception) {
             AppLog.log("DL", "Failed: ${e.message}")
             dao.update(item.copy(status = Status.FAILED, error = e.message?.take(300)))
