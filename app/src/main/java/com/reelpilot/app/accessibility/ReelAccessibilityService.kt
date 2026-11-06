@@ -91,11 +91,31 @@ class ReelAccessibilityService : AccessibilityService() {
         return false
     }
 
+    /** Node's text or content-desc is exactly one of the words (e.g. "Share"). */
+    private fun exactWords(node: AccessibilityNodeInfo, words: List<String>): Boolean {
+        val t = node.text?.toString()?.trim()?.lowercase() ?: ""
+        val d = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
+        return words.any { t == it || d == it }
+    }
+
+    /**
+     * Tiered node search. Order matters: an exact, clickable match (the real
+     * "Share" button) must beat a static label that merely *contains* the word
+     * (e.g. "People you share this content with…").
+     */
     private fun findIn(root: AccessibilityNodeInfo, words: List<String>, idWords: List<String> = emptyList()): AccessibilityNodeInfo? {
         val all = mutableListOf<AccessibilityNodeInfo>()
         collectNodes(root, all, 0)
-        // Prefer clickable matches
-        all.firstOrNull { matches(it, words, idWords) && it.isClickable }?.let { return it }
+        // Tier 1: clickable node whose text/desc is exactly one of the words
+        all.firstOrNull { it.isClickable && exactWords(it, words) }?.let { return it }
+        // Tier 2: any node with exact text/desc
+        all.firstOrNull { exactWords(it, words) }?.let { return it }
+        // Tier 3: clickable node with a matching view id
+        if (idWords.isNotEmpty()) {
+            all.firstOrNull { it.isClickable && idWords.any { w -> idOf(it).contains(w) } }?.let { return it }
+        }
+        // Tier 4: clickable contains, then any contains/id match
+        all.firstOrNull { it.isClickable && matches(it, words, idWords) }?.let { return it }
         return all.firstOrNull { matches(it, words, idWords) }
     }
 
@@ -187,6 +207,54 @@ class ReelAccessibilityService : AccessibilityService() {
     private suspend fun back() = performGlobalAction(GLOBAL_ACTION_BACK)
     private fun home() = performGlobalAction(GLOBAL_ACTION_HOME)
 
+    /** One upward swipe (reveals bottom-of-screen content like the Share bar). */
+    private suspend fun swipeUp() {
+        val latch = CompletableDeferred<Boolean>()
+        val m = resources.displayMetrics
+        val path = android.graphics.Path().apply {
+            moveTo(m.widthPixels / 2f, m.heightPixels * 0.75f)
+            lineTo(m.widthPixels / 2f, m.heightPixels * 0.35f)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 350))
+            .build()
+        dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                latch.complete(true)
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                latch.complete(false)
+            }
+        }, null)
+        latch.await()
+        delay(900)
+    }
+
+    /**
+     * After tapping Share, decide what happened:
+     *  "confirmed" → "Your reel has been shared" style message seen
+     *  "gone"      → the composer closed (Share button / "New reel" title vanished)
+     *  "still"     → still sitting on the share screen → tap needs a retry
+     */
+    private suspend fun waitShareResult(timeoutMs: Long): String {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            root()?.let { r ->
+                if (findText(
+                        r,
+                        listOf("your reel", "your post", "reel shared", "shared to your", "has been shared", "sharing to")
+                    ) != null
+                ) return "confirmed"
+                if (findIn(r, listOf("share"), idWords = listOf("share")) == null &&
+                    findText(r, listOf("new reel")) == null
+                ) return "gone"
+            }
+            delay(2000)
+        }
+        return "still"
+    }
+
     // -------------------------------------------------------------- flow
 
     /**
@@ -204,7 +272,7 @@ class ReelAccessibilityService : AccessibilityService() {
 
             // 1) Share sheet → tap "Reels" (some builds open the editor directly)
             val reelOption = waitFor(
-                words = listOf("reel"),
+                words = listOf("reel", "reels"),
                 timeoutMs = 12_000,
                 step = "share sheet Reels option"
             )
@@ -252,38 +320,41 @@ class ReelAccessibilityService : AccessibilityService() {
                 }
             }
 
-            val share = waitFor(
-                words = listOf("share"),
-                idWords = listOf("share", "done"),
-                timeoutMs = 15_000,
-                step = "Share button"
-            ) ?: return@withContext Pair(false, "Could not find the Share button — Instagram UI may have changed.")
-            step("Tapping Share")
-            tap(share)
-            delay(3000)
+            // 3.5) Make sure the bottom bar (Share button) is on screen
+            swipeUp()
 
-            // 4) Wait for upload to finish: editor closes and/or "shared" appears.
-            step("Waiting for upload to complete…")
-            val deadline = System.currentTimeMillis() + 120_000
-            var confirmed = false
-            while (System.currentTimeMillis() < deadline) {
-                root()?.let { r ->
-                    if (findText(r, listOf("your reel", "your post", "reel shared", "shared")) != null) {
-                        confirmed = true
+            // 4) Tap Share, verify it actually went through, retry up to 3 times.
+            var shareResult = "still"
+            var attempts = 0
+            while (attempts < 3) {
+                val share = waitFor(
+                    words = listOf("share"),
+                    idWords = listOf("share"),
+                    timeoutMs = 15_000,
+                    step = "Share button"
+                )
+                if (share == null) {
+                    if (attempts > 0) {
+                        // Share button vanished after we already tapped — upload in progress
+                        shareResult = "gone"
+                        break
                     }
-                    // "Share"/"Next" still visible means still composing
-                    if (findIn(r, listOf("share"), idWords = listOf("share")) != null && !confirmed) {
-                        // still on editor
-                    }
+                    return@withContext Pair(false, "Could not find the Share button — Instagram UI may have changed.")
                 }
-                if (confirmed) break
-                delay(2000)
+                step("Tapping Share (attempt ${attempts + 1})")
+                tap(share)
+                delay(3000)
+                shareResult = waitShareResult(60_000)
+                if (shareResult != "still") break
+                attempts++
+                swipeUp()
             }
-            step(if (confirmed) "Reel shared ✅" else "Share tapped; upload confirmed by feed state")
-            delay(2000)
+            AppLog.log("IG", "postReel finished, shareResult=$shareResult")
             home()
-            AppLog.log("IG", "postReel finished, confirmed=$confirmed")
-            Pair(true, "Posted successfully")
+            return@withContext when (shareResult) {
+                "confirmed", "gone" -> Pair(true, "Posted successfully")
+                else -> Pair(false, "Share button did not complete — check the Logs tab and retry from the Queue")
+            }
         } catch (e: Exception) {
             home()
             AppLog.log("IG", "postReel error: ${e.message}")
