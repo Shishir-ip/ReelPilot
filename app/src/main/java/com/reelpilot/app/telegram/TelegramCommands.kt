@@ -99,7 +99,7 @@ object TelegramCommands {
             }
 
             "/postnow" -> {
-                PostWorker.scheduleOneTime(context, forceNow = true, expedited = true)
+                PostWorker.scheduleOneTime(context, forceNow = true)
                 client.sendMessage(chat, "⚡ Posting the next ready video right now…")
             }
 
@@ -111,7 +111,7 @@ object TelegramCommands {
                 }
                 SettingsRepo.get(context).setIntervalHours(h)
                 QueueScheduler.reschedule(context)
-                PostWorker.scheduleOneTime(context, expedited = true)
+                PostWorker.scheduleOneTime(context)
                 client.sendMessage(chat, "⏰ Interval set: every $h hour(s). Queue re-slotted.")
             }
 
@@ -137,7 +137,7 @@ object TelegramCommands {
                 }.timeInMillis
                 dao.setPostAt(item.id, newTime)
                 QueueScheduler.reschedule(context)
-                PostWorker.scheduleOneTime(context, expedited = true)
+                PostWorker.scheduleOneTime(context)
                 client.sendMessage(chat, "📅 \"${item.title.take(50)}\" will post at ${timeFmt.format(Date(newTime))}")
             }
 

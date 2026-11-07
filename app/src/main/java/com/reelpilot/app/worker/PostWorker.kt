@@ -24,6 +24,7 @@ import com.reelpilot.app.telegram.TelegramClient
 import com.reelpilot.app.telegram.TelegramIngest
 import com.reelpilot.app.util.AppLog
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.runBlocking
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -171,24 +172,33 @@ class PostWorker(context: Context, params: WorkerParameters) :
         }
 
         /**
-         * Run a check soon. `expedited = true` bypasses WorkManager's batching
-         * so posting starts within seconds of a download finishing.
+         * Schedule a posting check aimed at the earliest waiting slot: it
+         * fires when the slot time arrives (immediately if due now), so a
+         * manually set time is honoured instead of waiting for the next
+         * 15-minute sweep. Never cancels a running check (APPEND policy).
          */
-        fun scheduleOneTime(context: Context, forceNow: Boolean = false, expedited: Boolean = false) {
+        fun scheduleOneTime(context: Context, forceNow: Boolean = false) {
+            val delayMs = if (forceNow) 0L else {
+                val earliest = runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        AppDatabase.get(context).queueDao().activeItems()
+                            .filter { it.status == Status.READY && it.postAt > 0 }
+                            .minOfOrNull { it.postAt }
+                    } catch (e: Exception) {
+                        null
+                    }
+                } ?: return  // nothing ready to post — periodic sweep covers future additions
+                (earliest - System.currentTimeMillis()).coerceAtLeast(0L)
+            }
             val builder = OneTimeWorkRequestBuilder<PostWorker>()
                 .setInputData(workDataOf("force" to forceNow))
-            if (expedited) {
+                .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+            if (delayMs == 0L) {
                 builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            } else {
-                builder.setConstraints(
-                    androidx.work.Constraints.Builder()
-                        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
-                        .build()
-                )
             }
             WorkManager.getInstance(context).enqueueUniqueWork(
                 ONESHOT,
-                ExistingWorkPolicy.REPLACE,
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
                 builder.build()
             )
         }

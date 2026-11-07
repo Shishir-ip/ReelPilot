@@ -122,7 +122,7 @@ fun QueueScreen() {
                             scope.launch {
                                 dao.retry(item.id)
                                 QueueScheduler.reschedule(context)
-                                PostWorker.scheduleOneTime(context, forceNow = true, expedited = true)
+                                PostWorker.scheduleOneTime(context, forceNow = true)
                             }
                         },
                         onDelete = {
@@ -130,7 +130,7 @@ fun QueueScreen() {
                                 dao.delete(item.id)
                                 // Later items shift up into the freed slot.
                                 QueueScheduler.reschedule(context)
-                                PostWorker.scheduleOneTime(context, expedited = true)
+                                PostWorker.scheduleOneTime(context)
                             }
                         },
                         onEditTime = { editItem = item }
@@ -164,7 +164,7 @@ fun QueueScreen() {
                         }.timeInMillis
                         dao.setPostAt(item.id, newTime)
                         QueueScheduler.reschedule(context)
-                        PostWorker.scheduleOneTime(context, expedited = true)
+                        PostWorker.scheduleOneTime(context)
                     }
                     editItem = null
                 }) { Text("Save") }
@@ -175,7 +175,7 @@ fun QueueScreen() {
                         scope.launch {
                             dao.setPostAt(item.id, 0)   // back to automatic slot
                             QueueScheduler.reschedule(context)
-                            PostWorker.scheduleOneTime(context, expedited = true)
+                            PostWorker.scheduleOneTime(context)
                         }
                         editItem = null
                     }) { Text("Auto") }

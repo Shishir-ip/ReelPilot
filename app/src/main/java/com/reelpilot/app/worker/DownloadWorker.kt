@@ -76,9 +76,9 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
             if (item.title.startsWith("[TEST]")) {
                 dao.setPostAt(item.id, System.currentTimeMillis())
                 QueueScheduler.reschedule(applicationContext)
-                PostWorker.scheduleOneTime(applicationContext, forceNow = true, expedited = true)
+                PostWorker.scheduleOneTime(applicationContext, forceNow = true)
             } else {
-                PostWorker.scheduleOneTime(applicationContext, expedited = true)
+                PostWorker.scheduleOneTime(applicationContext)
             }
         } catch (e: Exception) {
             AppLog.log("DL", "Failed: ${e.message}")

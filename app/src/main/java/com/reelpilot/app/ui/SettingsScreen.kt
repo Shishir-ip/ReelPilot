@@ -246,7 +246,7 @@ fun SettingsScreen() {
                     if (token.isNotBlank()) TgPollService.start(context)
                     // Interval changed → re-slot every waiting video.
                     QueueScheduler.reschedule(context)
-                    com.reelpilot.app.worker.PostWorker.scheduleOneTime(context, expedited = true)
+                    com.reelpilot.app.worker.PostWorker.scheduleOneTime(context)
                     snackbar.showSnackbar("Saved ✓")
                 }
             },
