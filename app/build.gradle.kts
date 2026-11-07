@@ -23,10 +23,13 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("../keystore/reelpilot.keystore")
-            storePassword = "reelpilot2024"
-            keyAlias = "reelpilot"
-            keyPassword = "reelpilot2024"
+            // Keystore is provided via environment (CI decodes it from an
+            // encrypted Actions secret). For local builds, place it at
+            // keystore/reelpilot.keystore (git-ignored).
+            storeFile = file(System.getenv("KEYSTORE_FILE") ?: "../keystore/reelpilot.keystore")
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "reelpilot2024"
+            keyAlias = System.getenv("KEY_ALIAS") ?: "reelpilot"
+            keyPassword = System.getenv("KEYSTORE_PASSWORD") ?: "reelpilot2024"
             storeType = "PKCS12"
         }
     }

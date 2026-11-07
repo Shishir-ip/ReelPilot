@@ -48,9 +48,9 @@ That's it. Check progress any time in the app's **Queue** and **Logs** tabs.
 ./gradlew assembleRelease
 ```
 
-The signed APK lands in `app/build/outputs/apk/release/`. GitHub Actions builds it automatically on every push — see the **Releases** page for ready-to-install APKs.
+The signed APK lands in `app/build/outputs/apk/release/`. GitHub Actions builds and signs releases automatically — the signing keystore is **not** in this repo; it's stored encrypted in the repository's Actions secrets.
 
-> ℹ️ The signing keystore is included in this repo (`keystore/reelpilot.keystore`, PKCS12) so anyone can reproduce identical builds. Fine for a personal tool — if you fork this for something public, replace it with your own key.
+> ℹ️ Forking? Replace the `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` secrets with your own signing key.
 
 ## Tech stack
 

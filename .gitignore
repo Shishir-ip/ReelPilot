@@ -7,3 +7,6 @@ build/
 captures/
 .externalNativeBuild
 .cxx
+
+# Signing material stays out of the repo
+keystore/
