@@ -50,6 +50,12 @@ interface QueueDao {
     @Query("SELECT * FROM queue WHERE status = :status ORDER BY createdAt ASC")
     suspend fun byStatus(status: String): List<QueueItem>
 
+    @Query("SELECT * FROM queue WHERE status IN ('QUEUED','DOWNLOADING','READY','POSTING','FAILED') ORDER BY createdAt ASC")
+    suspend fun activeItems(): List<QueueItem>
+
+    @Query("DELETE FROM queue WHERE status IN ('QUEUED','DOWNLOADING','READY','POSTING','FAILED')")
+    suspend fun clearActive()
+
     @Query("SELECT * FROM queue WHERE status = 'READY' AND postAt > 0 AND postAt <= :now ORDER BY postAt ASC LIMIT 1")
     suspend fun dueReady(now: Long): QueueItem?
 

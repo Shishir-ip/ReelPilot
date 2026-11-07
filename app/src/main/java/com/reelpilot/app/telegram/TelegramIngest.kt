@@ -114,6 +114,10 @@ object TelegramIngest {
         // Link in text?
         val text = msg.optString("text", "")
         if (text.isNotBlank()) {
+            // Bot commands first (/list, /status, …)
+            if (text.trim().startsWith("/")) {
+                return TelegramCommands.handle(context, client, chat, text)
+            }
             val url = URL_REGEX.find(text)?.value
             if (url != null) {
                 enqueue(context, client, dao, QueueItem(
