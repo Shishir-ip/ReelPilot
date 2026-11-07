@@ -3,6 +3,7 @@ package com.reelpilot.app.accessibility
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.graphics.Rect
 import android.os.Bundle
@@ -207,6 +208,21 @@ class ReelAccessibilityService : AccessibilityService() {
     private suspend fun back() = performGlobalAction(GLOBAL_ACTION_BACK)
     private fun home() = performGlobalAction(GLOBAL_ACTION_HOME)
 
+    /**
+     * After a post, force-close Instagram completely (background process kill)
+     * so no leftover screen, dialog or draft can interfere with the next
+     * automated posting session.
+     */
+    private fun killInstagram() {
+        try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            am.killBackgroundProcesses(INSTAGRAM_PACKAGE)
+            AppLog.log("IG", "Instagram force-closed")
+        } catch (e: Exception) {
+            AppLog.log("IG", "Could not kill Instagram: ${e.message}")
+        }
+    }
+
     /** One upward swipe (reveals bottom-of-screen content like the Share bar). */
     private suspend fun swipeUp() {
         val latch = CompletableDeferred<Boolean>()
@@ -350,7 +366,10 @@ class ReelAccessibilityService : AccessibilityService() {
                 swipeUp()
             }
             AppLog.log("IG", "postReel finished, shareResult=$shareResult")
+            delay(1500)
             home()
+            delay(1000)
+            killInstagram()
             return@withContext when (shareResult) {
                 "confirmed", "gone" -> Pair(true, "Posted successfully")
                 else -> Pair(false, "Share button did not complete — check the Logs tab and retry from the Queue")
