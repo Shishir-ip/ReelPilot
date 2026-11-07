@@ -58,7 +58,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
                     )?.toLongOrNull() ?: 0
                     r.release()
                     if (ms > 0) "\n⏱ Length: ${ms / 60000}:${String.format(Locale.getDefault(), "%02d", (ms / 1000) % 60)}" else ""
-                } catch (e: Exception) ""
+                } catch (e: Exception) { "" }
             } ?: ""
             val s = SettingsRepo.get(applicationContext).current()
             TelegramClient(s.botToken).sendMessage(
