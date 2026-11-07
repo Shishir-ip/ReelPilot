@@ -13,8 +13,8 @@ android {
         applicationId = "com.reelpilot.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.5.3"
+        versionCode = 11
+        versionName = "1.5.4"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")

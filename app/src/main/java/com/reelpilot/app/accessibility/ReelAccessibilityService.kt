@@ -25,6 +25,9 @@ class ReelAccessibilityService : AccessibilityService() {
     companion object {
         const val INSTAGRAM_PACKAGE = "com.instagram.android"
 
+        /** Grace period after Share before force-closing Instagram (background upload). */
+        const val UPLOAD_GRACE_MS = 120_000L
+
         @Volatile
         var instance: ReelAccessibilityService? = null
             private set
@@ -366,9 +369,13 @@ class ReelAccessibilityService : AccessibilityService() {
                 swipeUp()
             }
             AppLog.log("IG", "postReel finished, shareResult=$shareResult")
-            delay(1500)
+            // Leave Instagram's UI immediately…
             home()
-            delay(1000)
+            // …but do NOT kill the process yet: the upload keeps running in
+            // Instagram's background after the composer closes. Killing it
+            // now would abort the upload (the v1.5.2 regression).
+            step("Waiting for Instagram to finish uploading…")
+            delay(UPLOAD_GRACE_MS)
             killInstagram()
             return@withContext when (shareResult) {
                 "confirmed", "gone" -> Pair(true, "Posted successfully")
