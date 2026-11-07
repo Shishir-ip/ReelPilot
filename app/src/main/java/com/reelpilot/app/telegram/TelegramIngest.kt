@@ -120,16 +120,18 @@ object TelegramIngest {
             if (text.trim().startsWith("/")) {
                 return TelegramCommands.handle(context, client, chat, text)
             }
-            val url = URL_REGEX.find(text)?.value
-            if (url != null) {
-                enqueue(context, client, dao, QueueItem(
-                    source = "link", url = url,
-                    title = "Link: ${url.take(80)}",
-                    // Caption = message text with the URL stripped out, so the
-                    // reel doesn't get captioned with the raw link.
-                    caption = text.replaceFirst(URL_REGEX, "").trim().take(200),
-                    chatId = chat
-                ))
+            // Queue EVERY link in the message (users paste several at once).
+            val urls = URL_REGEX.findAll(text).map { it.value }.toList()
+            if (urls.isNotEmpty()) {
+                val caption = text.replace(URL_REGEX, "").trim().take(200)
+                urls.forEach { url ->
+                    enqueue(context, client, dao, QueueItem(
+                        source = "link", url = url,
+                        title = "Link: ${url.take(80)}",
+                        caption = caption,
+                        chatId = chat
+                    ))
+                }
                 return true
             }
             client.sendMessage(chat, "🤖 ReelPilot here!\nSend a video link or a video file (≤20 MB) and I'll handle the rest.")
@@ -151,7 +153,11 @@ object TelegramIngest {
             return
         }
         val id = dao.insert(item)
-        WorkManager.getInstance(context).enqueue(
+        // Sequential download chain: links sent in a burst download one by
+        // one instead of running yt-dlp against itself.
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "reelpilot_dl",
+            androidx.work.ExistingWorkPolicy.APPEND_OR_REPLACE,
             OneTimeWorkRequestBuilder<DownloadWorker>()
                 .setInputData(workDataOf("itemId" to id))
                 .build()

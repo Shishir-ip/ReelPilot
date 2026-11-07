@@ -383,10 +383,12 @@ class ReelAccessibilityService : AccessibilityService() {
                                 true
                             }
                             android.view.MotionEvent.ACTION_MOVE -> {
+                                // Reach the whole screen — Instagram's Next/Share
+                                // buttons sit at the very bottom edge.
                                 lp.x = (baseX + (ev.rawX - downX)).toInt()
-                                    .coerceIn(0, dm.widthPixels - dp(90))
+                                    .coerceIn(-dp(10), dm.widthPixels - dp(40))
                                 lp.y = (baseY + (ev.rawY - downY)).toInt()
-                                    .coerceIn(0, dm.heightPixels - dp(140))
+                                    .coerceIn(-dp(10), dm.heightPixels - dp(24))
                                 wm.updateViewLayout(v, lp)
                                 true
                             }
@@ -410,8 +412,10 @@ class ReelAccessibilityService : AccessibilityService() {
                     if (save && markers.isNotEmpty()) {
                         val steps = markers.sortedBy { it.second.y }.map { (v, lp) ->
                             listOf(
-                                (lp.x + (v.measuredWidth.takeIf { it > 0 } ?: dp(60)) / 2f) / dm.widthPixels,
-                                (lp.y + (v.measuredHeight.takeIf { it > 0 } ?: dp(46)) / 2f) / dm.heightPixels
+                                ((lp.x + (v.measuredWidth.takeIf { it > 0 } ?: dp(60)) / 2f) / dm.widthPixels)
+                                    .coerceIn(0f, 0.995f),
+                                ((lp.y + (v.measuredHeight.takeIf { it > 0 } ?: dp(46)) / 2f) / dm.heightPixels)
+                                    .coerceIn(0f, 0.995f)
                             )
                         }
                         val json = org.json.JSONArray().apply {
