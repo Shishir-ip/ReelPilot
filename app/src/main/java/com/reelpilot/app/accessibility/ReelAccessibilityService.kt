@@ -289,77 +289,112 @@ class ReelAccessibilityService : AccessibilityService() {
     fun startFlowRecording(onDone: (Boolean) -> Unit) {
         val main = android.os.Handler(android.os.Looper.getMainLooper())
         main.post {
+            var finished = false
             try {
                 val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
                 val dm = resources.displayMetrics
+                val density = dm.density
+                fun dp(v: Int): Int = (v * density).toInt()
+                fun rounded(color: Long, radiusDp: Float) =
+                    android.graphics.drawable.GradientDrawable().apply {
+                        setColor(color.toInt())
+                        cornerRadius = radiusDp * density
+                    }
+
                 val markers = mutableListOf<Pair<android.widget.TextView, android.view.WindowManager.LayoutParams>>()
                 var stepCount = 0
 
-                val overlayFlags = android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY or
-                    android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                fun panelParams(y: Int) = android.view.WindowManager.LayoutParams().apply {
-                    type = android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
-                    flags = overlayFlags
-                    format = android.graphics.PixelFormat.TRANSLUCENT
-                    width = android.view.WindowManager.LayoutParams.WRAP_CONTENT
-                    height = android.view.WindowManager.LayoutParams.WRAP_CONTENT
-                    x = 24
-                    this.y = y
-                    gravity = android.view.Gravity.TOP or android.view.Gravity.START
-                }
+                // The overlay window: touchable, non-focusable. (The window
+                // TYPE must only go in `type` — putting it in `flags` used to
+                // set FLAG_NOT_TOUCHABLE and made the overlay untouchable.)
+                fun overlayParams(): android.view.WindowManager.LayoutParams =
+                    android.view.WindowManager.LayoutParams().apply {
+                        type = android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                        flags = android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                            android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        format = android.graphics.PixelFormat.TRANSLUCENT
+                        width = android.view.WindowManager.LayoutParams.WRAP_CONTENT
+                        height = android.view.WindowManager.LayoutParams.WRAP_CONTENT
+                        gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                    }
 
                 val panel = android.widget.LinearLayout(this).apply {
                     orientation = android.widget.LinearLayout.VERTICAL
-                    setBackgroundColor(0xE6101014.toInt())
-                    setPadding(20, 16, 20, 16)
+                    background = rounded(0xF2141419, 20f)
+                    setPadding(dp(12), dp(10), dp(12), dp(12))
+                    elevation = dp(8).toFloat()
                 }
-                fun button(label: String, onClick: () -> Unit) = android.widget.Button(this).apply {
-                    text = label
-                    setOnClickListener { onClick() }
+
+                val counter = android.widget.TextView(this).apply {
+                    text = "🎙 Flow recorder — 1 step"
+                    setTextColor(0xFFD0BCFF.toInt())
+                    textSize = 13f
+                    setPadding(dp(4), dp(2), dp(4), dp(8))
+                }
+                panel.addView(counter)
+
+                fun styledButton(label: String, bg: Long, onClick: () -> Unit) =
+                    android.widget.Button(this).apply {
+                        text = label
+                        textSize = 14f
+                        isAllCaps = false
+                        setTextColor(android.graphics.Color.WHITE)
+                        background = rounded(bg, 14f)
+                        setPadding(dp(14), dp(8), dp(14), dp(8))
+                        stateListAnimator = null
+                        setOnClickListener { onClick() }
+                    }
+
+                fun updateCounter() {
+                    counter.text = "🎙 Flow recorder — $stepCount step${if (stepCount == 1) "" else "s"}"
                 }
 
                 fun removeMarker(tv: android.widget.TextView, lp: android.view.WindowManager.LayoutParams) {
-                    wm.removeView(tv)
+                    runCatching { wm.removeView(tv) }
                     markers.removeIf { it.first == tv }
-                    // Renumber remaining markers
-                    markers.sortedBy { it.second.y }.forEachIndexed { i, (v, l) -> v.text = "${i + 1}" }
+                    markers.sortedBy { it.second.y }.forEachIndexed { i, (v, _) -> v.text = "${i + 1}" }
+                    stepCount = markers.size
+                    updateCounter()
                 }
 
                 fun addMarker() {
                     stepCount++
+                    updateCounter()
                     val tv = android.widget.TextView(this).apply {
                         text = "$stepCount"
                         setTextColor(android.graphics.Color.WHITE)
                         textSize = 22f
                         gravity = android.view.Gravity.CENTER
-                        setBackgroundColor(0xCC6750A4.toInt())
-                        setPadding(28, 20, 28, 20)
+                        background = rounded(0xE66750A4, 30f)
+                        setPadding(dp(18), dp(10), dp(18), dp(10))
+                        elevation = dp(6).toFloat()
                     }
-                    val lp = android.view.WindowManager.LayoutParams().apply {
-                        type = android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
-                        flags = overlayFlags
-                        format = android.graphics.PixelFormat.TRANSLUCENT
-                        width = android.view.WindowManager.LayoutParams.WRAP_CONTENT
-                        height = android.view.WindowManager.LayoutParams.WRAP_CONTENT
-                        x = dm.widthPixels / 2 - 60
+                    val lp = overlayParams().apply {
+                        x = dm.widthPixels / 2 - dp(60)
                         y = dm.heightPixels / 2
-                        gravity = android.view.Gravity.TOP or android.view.Gravity.START
                     }
-                    // Drag handling
                     var downX = 0f; var downY = 0f; var baseX = 0; var baseY = 0
                     tv.setOnTouchListener { v, ev ->
                         when (ev.actionMasked) {
                             android.view.MotionEvent.ACTION_DOWN -> {
-                                downX = ev.rawX; downY = ev.rawY; baseX = lp.x; baseY = lp.y; true
+                                downX = ev.rawX; downY = ev.rawY
+                                baseX = lp.x; baseY = lp.y
+                                v.alpha = 0.85f
+                                true
                             }
                             android.view.MotionEvent.ACTION_MOVE -> {
                                 lp.x = (baseX + (ev.rawX - downX)).toInt()
-                                    .coerceIn(0, dm.widthPixels - 120)
+                                    .coerceIn(0, dm.widthPixels - dp(90))
                                 lp.y = (baseY + (ev.rawY - downY)).toInt()
-                                    .coerceIn(0, dm.heightPixels - 160)
-                                wm.updateViewLayout(v, lp); true
+                                    .coerceIn(0, dm.heightPixels - dp(140))
+                                wm.updateViewLayout(v, lp)
+                                true
                             }
-                            else -> false
+                            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                                v.alpha = 1f
+                                true
+                            }
+                            else -> true
                         }
                     }
                     tv.setOnLongClickListener { removeMarker(tv, lp); true }
@@ -367,36 +402,37 @@ class ReelAccessibilityService : AccessibilityService() {
                     markers.add(tv to lp)
                 }
 
-                var finished = false
                 fun end(save: Boolean) {
                     if (finished) return
                     finished = true
-                    wm.removeView(panel)
+                    runCatching { wm.removeView(panel) }
                     markers.forEach { (v, _) -> runCatching { wm.removeView(v) } }
-                    if (save) {
+                    if (save && markers.isNotEmpty()) {
                         val steps = markers.sortedBy { it.second.y }.map { (v, lp) ->
                             listOf(
-                                (lp.x + 60f) / dm.widthPixels,
-                                (lp.y + 50f) / dm.heightPixels
+                                (lp.x + (v.measuredWidth.takeIf { it > 0 } ?: dp(60)) / 2f) / dm.widthPixels,
+                                (lp.y + (v.measuredHeight.takeIf { it > 0 } ?: dp(46)) / 2f) / dm.heightPixels
                             )
                         }
                         val json = org.json.JSONArray().apply {
                             steps.forEach { s -> put(org.json.JSONArray(s)) }
                         }.toString()
                         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            com.reelpilot.app.data.SettingsRepo.get(applicationContext).setManualSteps(json)
-                            com.reelpilot.app.data.SettingsRepo.get(applicationContext).setManualFlow(true)
+                            val repo = com.reelpilot.app.data.SettingsRepo.get(applicationContext)
+                            repo.setManualSteps(json)
+                            repo.setManualFlow(true)
                             AppLog.log("FLOW", "Saved manual flow with ${steps.size} steps")
                         }
                     }
-                    onDone(save)
+                    onDone(save && markers.isNotEmpty())
                 }
 
-                panel.addView(button("＋ Add tap step", { addMarker() }))
-                panel.addView(button("✔ Save flow", { end(true) }))
-                panel.addView(button("✖ Cancel", { end(false) }))
+                panel.addView(styledButton("＋  Add tap step", 0xFF6750A4) { addMarker() })
+                panel.addView(styledButton("✔  Save flow", 0xFF2E7D32) { end(true) })
+                panel.addView(styledButton("✖  Cancel", 0xFF8B2E2E) { end(false) })
 
-                wm.addView(panel, panelParams(80))
+                val pp = overlayParams().apply { x = dp(16); y = dp(60) }
+                wm.addView(panel, pp)
                 addMarker()
                 AppLog.log("FLOW", "Recorder open — drag the numbered marker(s), then Save")
             } catch (e: Exception) {

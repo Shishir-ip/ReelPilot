@@ -208,8 +208,13 @@ fun SettingsScreen() {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
+                var pickedUri by remember { mutableStateOf<String?>(null) }
+                val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.GetContent()
+                ) { uri -> if (uri != null) pickedUri = uri.toString() }
+
+                OutlinedButton(
+                    onClick = {
                         scope.launch {
                             val s = SettingsRepo.get(context).current()
                             if (flowLink.isBlank()) { toast("Paste a link first"); return@launch }
@@ -229,16 +234,20 @@ fun SettingsScreen() {
                             flowLink = ""
                             toast("Downloading — you'll get a bot message when ready")
                         }
-                    }) { Text("⬇ Download link") }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("⬇  Download link video") }
 
-                    var pickedUri by remember { mutableStateOf<String?>(null) }
-                    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
-                        androidx.activity.result.contract.ActivityResultContracts.GetContent()
-                    ) { uri -> if (uri != null) pickedUri = uri.toString() }
-                    OutlinedButton(onClick = { picker.launch("video/*") }) {
-                        Text(if (pickedUri == null) "🖼 Pick from gallery" else "🖼 Video selected ✓")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { picker.launch("video/*") },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            if (pickedUri == null) "🖼 Gallery" else "🖼 Selected ✓",
+                            maxLines = 1
+                        )
                     }
-
                     Button(
                         onClick = {
                             val uri = pickedUri
@@ -250,8 +259,9 @@ fun SettingsScreen() {
                                     .putExtra(com.reelpilot.app.PostActivity.EXTRA_FLOW_SETUP, true)
                             )
                         },
-                        enabled = pickedUri != null
-                    ) { Text("🎙 Start recorder") }
+                        enabled = pickedUri != null,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("🎙 Start recorder", maxLines = 1) }
                 }
                 Text(
                     "In the recorder: ＋ adds a numbered marker — drag each one onto the button Instagram should tap, in order. Long-press a marker to remove it, ✔ Save when done. Markers are positions only — nothing is tapped until a real post runs.",
