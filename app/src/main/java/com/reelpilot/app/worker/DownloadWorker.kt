@@ -49,10 +49,21 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
                 "as soon as possible"
             else
                 SimpleDateFormat("EEE HH:mm", Locale.getDefault()).format(Date(slot))
+            val durText = fresh?.localUri?.let { uri ->
+                try {
+                    val r = android.media.MediaMetadataRetriever()
+                    r.setDataSource(applicationContext, android.net.Uri.parse(uri))
+                    val ms = r.extractMetadata(
+                        android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
+                    )?.toLongOrNull() ?: 0
+                    r.release()
+                    if (ms > 0) "\n⏱ Length: ${ms / 60000}:${String.format(Locale.getDefault(), "%02d", (ms / 1000) % 60)}" else ""
+                } catch (e: Exception) ""
+            } ?: ""
             val s = SettingsRepo.get(applicationContext).current()
             TelegramClient(s.botToken).sendMessage(
                 item.chatId,
-                "✅ Downloaded: ${item.title}\n⏰ Will post at: $whenText"
+                "✅ Downloaded: ${item.title}\n⏰ Will post at: $whenText$durText"
             )
             // Post right away when it's due (first post / elapsed interval);
             // later queued items still wait for the configured interval.
