@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Accessibility
+import androidx.compose.material.icons.rounded.BatteryAlert
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Layers
@@ -153,14 +154,25 @@ fun DashboardScreen(onOpenSettings: () -> Unit) {
                         )
                     )
                 }
+
+                CheckRow(
+                    ok = (context.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager)
+                        .isIgnoringBatteryOptimizations(context.packageName),
+                    icon = Icons.Rounded.BatteryAlert,
+                    title = "Battery optimization off",
+                    hint = "Makes the bot reply instantly with the screen off"
+                ) {
+                    runCatching {
+                        context.startActivity(
+                            Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                                .setData(Uri.parse("package:com.reelpilot.app"))
+                        )
+                    }.onFailure {
+                        context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    }
+                }
             }
         }
-
-        Spacer(Modifier.height(8.dp))
-        OutlinedButton(
-            onClick = { context.startActivity(Intent(Settings.ACTION_SETTINGS)) },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Battery: disable optimization for ReelPilot (recommended)") }
     }
 }
 
