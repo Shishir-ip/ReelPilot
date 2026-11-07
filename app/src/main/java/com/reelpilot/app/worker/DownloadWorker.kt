@@ -72,7 +72,14 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
             )
             // Post right away when it's due (first post / elapsed interval);
             // later queued items still wait for the configured interval.
-            PostWorker.scheduleOneTime(applicationContext, expedited = true)
+            // Test items bypass the interval entirely and post immediately.
+            if (item.title.startsWith("[TEST]")) {
+                dao.setPostAt(item.id, System.currentTimeMillis())
+                QueueScheduler.reschedule(applicationContext)
+                PostWorker.scheduleOneTime(applicationContext, forceNow = true, expedited = true)
+            } else {
+                PostWorker.scheduleOneTime(applicationContext, expedited = true)
+            }
         } catch (e: Exception) {
             AppLog.log("DL", "Failed: ${e.message}")
             dao.update(item.copy(status = Status.FAILED, error = e.message?.take(300)))

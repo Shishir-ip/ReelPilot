@@ -63,6 +63,8 @@ object TelegramIngest {
         val msg = update.optJSONObject("message") ?: return false
         val from = msg.optJSONObject("from")?.optLong("id") ?: return false
         val chat = msg.optJSONObject("chat")?.optLong("id") ?: return false
+        // Remember the chat so test posts can report back into it.
+        if (chat > 0) SettingsRepo.get(context).setLastChatId(chat)
 
         if (settings.allowAnyone) {
             // Open mode: any Telegram account can send links (default).

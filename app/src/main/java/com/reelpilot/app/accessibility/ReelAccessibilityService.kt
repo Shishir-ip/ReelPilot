@@ -25,9 +25,6 @@ class ReelAccessibilityService : AccessibilityService() {
     companion object {
         const val INSTAGRAM_PACKAGE = "com.instagram.android"
 
-        /** Grace period after Share before force-closing Instagram (background upload). */
-        const val UPLOAD_GRACE_MS = 120_000L
-
         @Volatile
         var instance: ReelAccessibilityService? = null
             private set
@@ -290,8 +287,9 @@ class ReelAccessibilityService : AccessibilityService() {
      */
     suspend fun postReel(caption: String): Pair<Boolean, String> = withContext(Dispatchers.Default) {
         try {
+            val t = com.reelpilot.app.data.SettingsRepo.get(applicationContext).current()
             step("Waiting for Instagram to open…")
-            if (!waitForPackage(INSTAGRAM_PACKAGE, 30_000)) {
+            if (!waitForPackage(INSTAGRAM_PACKAGE, t.igOpenWaitSec * 1000L)) {
                 return@withContext Pair(false, "Instagram did not open. Is it installed and updated?")
             }
             delay(2000)
@@ -311,7 +309,7 @@ class ReelAccessibilityService : AccessibilityService() {
             }
 
             // 2) Clip preview screen → Next (cold starts load slowly — be patient)
-            val next = waitFor(words = listOf("next"), idWords = listOf("next"), timeoutMs = 75_000, step = "Next button")
+            val next = waitFor(words = listOf("next"), idWords = listOf("next"), timeoutMs = t.nextWaitSec * 1000L, step = "Next button")
                 ?: return@withContext Pair(false, "Could not find the Next button — Instagram UI may have changed.")
             step("Tapping Next")
             tap(next)
@@ -356,7 +354,7 @@ class ReelAccessibilityService : AccessibilityService() {
                 val share = waitFor(
                     words = listOf("share"),
                     idWords = listOf("share"),
-                    timeoutMs = 30_000,
+                    timeoutMs = t.shareWaitSec * 1000L,
                     step = "Share button"
                 )
                 if (share == null) {
@@ -382,7 +380,7 @@ class ReelAccessibilityService : AccessibilityService() {
             // Instagram's background after the composer closes. Killing it
             // now would abort the upload (the v1.5.2 regression).
             step("Waiting for Instagram to finish uploading…")
-            delay(UPLOAD_GRACE_MS)
+            delay(t.uploadGraceSec * 1000L)
             killInstagram()
             return@withContext when (shareResult) {
                 "confirmed", "gone" -> Pair(true, "Posted successfully")

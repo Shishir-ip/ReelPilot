@@ -86,7 +86,8 @@ class PostActivity : Activity() {
                 AppLog.log("POST", "Pre-warm failed: ${e.message}")
                 false
             }
-            delay(if (warmOk) 4000 else 2000)  // let the feed settle
+            val warmupSec = com.reelpilot.app.data.SettingsRepo.get(applicationContext).current().warmupSec
+            delay(warmupSec * 1000L)  // let the feed settle
 
             // 2) Now share the video into the warm app.
             setStatus("Opening reels upload…")

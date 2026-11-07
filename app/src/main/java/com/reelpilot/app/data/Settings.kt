@@ -20,7 +20,14 @@ data class AppSettings(
     val intervalHours: Int = 2,
     val caption: String = "",
     val autoPost: Boolean = true,
-    val nextPostAt: Long = 0L
+    val nextPostAt: Long = 0L,
+    val lastChatId: Long = 0L,
+    // Automation timing (seconds) — user-tunable in Settings
+    val warmupSec: Int = 4,
+    val igOpenWaitSec: Int = 30,
+    val nextWaitSec: Int = 75,
+    val shareWaitSec: Int = 30,
+    val uploadGraceSec: Int = 120
 )
 
 class SettingsRepo(private val context: Context) {
@@ -33,6 +40,12 @@ class SettingsRepo(private val context: Context) {
         val CAPTION = stringPreferencesKey("caption")
         val AUTO_POST = booleanPreferencesKey("auto_post")
         val NEXT_POST_AT = longPreferencesKey("next_post_at")
+        val LAST_CHAT_ID = longPreferencesKey("last_chat_id")
+        val WARMUP = intPreferencesKey("warmup_sec")
+        val IG_OPEN_WAIT = intPreferencesKey("ig_open_wait_sec")
+        val NEXT_WAIT = intPreferencesKey("next_wait_sec")
+        val SHARE_WAIT = intPreferencesKey("share_wait_sec")
+        val UPLOAD_GRACE = intPreferencesKey("upload_grace_sec")
     }
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -45,7 +58,13 @@ class SettingsRepo(private val context: Context) {
             intervalHours = p[Keys.INTERVAL] ?: 2,
             caption = p[Keys.CAPTION] ?: "",
             autoPost = p[Keys.AUTO_POST] ?: true,
-            nextPostAt = p[Keys.NEXT_POST_AT] ?: 0L
+            nextPostAt = p[Keys.NEXT_POST_AT] ?: 0L,
+            lastChatId = p[Keys.LAST_CHAT_ID] ?: 0L,
+            warmupSec = p[Keys.WARMUP] ?: 4,
+            igOpenWaitSec = p[Keys.IG_OPEN_WAIT] ?: 30,
+            nextWaitSec = p[Keys.NEXT_WAIT] ?: 75,
+            shareWaitSec = p[Keys.SHARE_WAIT] ?: 30,
+            uploadGraceSec = p[Keys.UPLOAD_GRACE] ?: 120
         )
     }
 
@@ -65,6 +84,21 @@ class SettingsRepo(private val context: Context) {
     suspend fun setCaption(v: String) = context.dataStore.edit { it[Keys.CAPTION] = v }
     suspend fun setAutoPost(v: Boolean) = context.dataStore.edit { it[Keys.AUTO_POST] = v }
     suspend fun setNextPostAt(v: Long) = context.dataStore.edit { it[Keys.NEXT_POST_AT] = v }
+    suspend fun setLastChatId(v: Long) = context.dataStore.edit { it[Keys.LAST_CHAT_ID] = v }
+    suspend fun setWarmupSec(v: Int) = context.dataStore.edit { it[Keys.WARMUP] = v.coerceIn(1, 20) }
+    suspend fun setIgOpenWaitSec(v: Int) = context.dataStore.edit { it[Keys.IG_OPEN_WAIT] = v.coerceIn(10, 90) }
+    suspend fun setNextWaitSec(v: Int) = context.dataStore.edit { it[Keys.NEXT_WAIT] = v.coerceIn(30, 180) }
+    suspend fun setShareWaitSec(v: Int) = context.dataStore.edit { it[Keys.SHARE_WAIT] = v.coerceIn(10, 120) }
+    suspend fun setUploadGraceSec(v: Int) = context.dataStore.edit { it[Keys.UPLOAD_GRACE] = v.coerceIn(30, 600) }
+
+    /** Put every automation timing back to its default. */
+    suspend fun resetTiming() = context.dataStore.edit {
+        it[Keys.WARMUP] = 4
+        it[Keys.IG_OPEN_WAIT] = 30
+        it[Keys.NEXT_WAIT] = 75
+        it[Keys.SHARE_WAIT] = 30
+        it[Keys.UPLOAD_GRACE] = 120
+    }
 
     companion object {
         @Volatile
