@@ -2,8 +2,13 @@ package com.reelpilot.app
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.TextView
 import com.reelpilot.app.accessibility.ReelAccessibilityService
 import com.reelpilot.app.util.AppLog
 import com.reelpilot.app.worker.PostWorker
@@ -13,10 +18,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Invisible activity used to wake the screen and hand the video to Instagram.
- * Started by PostWorker at the scheduled posting time.
+ * Wakes the screen and hands the video to Instagram. Shows a visible status
+ * so a slow Instagram cold start never looks like the app froze.
  */
 class PostActivity : Activity() {
+
+    private lateinit var statusText: TextView
+
+    private fun setStatus(msg: String) {
+        runOnUiThread { statusText.text = "ReelPilot\n\n$msg" }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,6 +38,23 @@ class PostActivity : Activity() {
                 android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
 
+        val root = FrameLayout(this).apply { setBackgroundColor(0xFF101014.toInt()) }
+        statusText = TextView(this).apply {
+            text = "ReelPilot\n\nPosting…"
+            setTextColor(Color.WHITE)
+            textSize = 20f
+            gravity = Gravity.CENTER
+            setPadding(48, 48, 48, 48)
+        }
+        root.addView(
+            statusText,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        setContentView(root)
+
         val uri = intent.getStringExtra(EXTRA_URI)
         val caption = intent.getStringExtra(EXTRA_CAPTION) ?: ""
 
@@ -36,6 +64,7 @@ class PostActivity : Activity() {
             return
         }
 
+        setStatus("Starting Instagram…")
         AppLog.log("POST", "Waking screen and launching Instagram share…")
 
         // Hand the video straight to Instagram via the share target.
@@ -57,9 +86,11 @@ class PostActivity : Activity() {
             return
         }
 
+        setStatus("Instagram is loading…\n(cold starts can take a moment)")
+
         // Drive the remaining composer steps through the accessibility service.
         CoroutineScope(Dispatchers.Default).launch {
-            val result = withTimeoutOrNull(8 * 60_000L) {
+            val result = withTimeoutOrNull(9 * 60_000L) {
                 val svc = ReelAccessibilityService.instance
                 if (svc == null) {
                     Pair(false, "Accessibility service is not enabled")

@@ -284,7 +284,7 @@ class ReelAccessibilityService : AccessibilityService() {
     suspend fun postReel(caption: String): Pair<Boolean, String> = withContext(Dispatchers.Default) {
         try {
             step("Waiting for Instagram to open…")
-            if (!waitForPackage(INSTAGRAM_PACKAGE, 20_000)) {
+            if (!waitForPackage(INSTAGRAM_PACKAGE, 30_000)) {
                 return@withContext Pair(false, "Instagram did not open. Is it installed and updated?")
             }
             delay(2000)
@@ -292,7 +292,7 @@ class ReelAccessibilityService : AccessibilityService() {
             // 1) Share sheet → tap "Reels" (some builds open the editor directly)
             val reelOption = waitFor(
                 words = listOf("reel", "reels"),
-                timeoutMs = 12_000,
+                timeoutMs = 20_000,
                 step = "share sheet Reels option"
             )
             if (reelOption != null) {
@@ -303,8 +303,8 @@ class ReelAccessibilityService : AccessibilityService() {
                 step("No share sheet — assuming editor opened directly")
             }
 
-            // 2) Clip preview screen → Next
-            val next = waitFor(words = listOf("next"), idWords = listOf("next"), timeoutMs = 30_000, step = "Next button")
+            // 2) Clip preview screen → Next (cold starts load slowly — be patient)
+            val next = waitFor(words = listOf("next"), idWords = listOf("next"), timeoutMs = 75_000, step = "Next button")
                 ?: return@withContext Pair(false, "Could not find the Next button — Instagram UI may have changed.")
             step("Tapping Next")
             tap(next)
@@ -349,7 +349,7 @@ class ReelAccessibilityService : AccessibilityService() {
                 val share = waitFor(
                     words = listOf("share"),
                     idWords = listOf("share"),
-                    timeoutMs = 15_000,
+                    timeoutMs = 30_000,
                     step = "Share button"
                 )
                 if (share == null) {
