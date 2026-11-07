@@ -14,6 +14,7 @@ import com.reelpilot.app.util.AppLog
 import com.reelpilot.app.worker.PostWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -65,31 +66,50 @@ class PostActivity : Activity() {
         }
 
         setStatus("Starting Instagram…")
-        AppLog.log("POST", "Waking screen and launching Instagram share…")
+        AppLog.log("POST", "Waking screen and pre-warming Instagram…")
 
-        // Hand the video straight to Instagram via the share target.
-        try {
-            val send = Intent(Intent.ACTION_SEND).apply {
-                type = "video/mp4"
-                putExtra(Intent.EXTRA_STREAM, Uri.parse(uri))
-                putExtra(Intent.EXTRA_TEXT, caption)
-                setPackage(ReelAccessibilityService.INSTAGRAM_PACKAGE)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            }
-            startActivity(send)
-        } catch (e: Exception) {
-            AppLog.log("POST", "Could not launch Instagram: ${e.message}")
-            PostWorker.completeResult(false, "Could not launch Instagram: ${e.message?.take(200)}")
-            finish()
-            return
-        }
-
-        setStatus("Instagram is loading…\n(cold starts can take a moment)")
-
-        // Drive the remaining composer steps through the accessibility service.
+        // Drive everything: pre-warm Instagram, then share the video into it.
         CoroutineScope(Dispatchers.Default).launch {
+            // 1) Open Instagram normally first so its process is warm —
+            //    sharing into a warm app opens the reels section quickly,
+            //    sharing into a closed one is slow and flaky.
+            val warmOk = try {
+                val launch = packageManager.getLaunchIntentForPackage(
+                    ReelAccessibilityService.INSTAGRAM_PACKAGE
+                )?.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                if (launch != null) {
+                    startActivity(launch)
+                    val svc = ReelAccessibilityService.instance
+                    svc?.awaitInstagram(25_000) ?: false
+                } else false
+            } catch (e: Exception) {
+                AppLog.log("POST", "Pre-warm failed: ${e.message}")
+                false
+            }
+            delay(if (warmOk) 4000 else 2000)  // let the feed settle
+
+            // 2) Now share the video into the warm app.
+            setStatus("Opening reels upload…")
+            try {
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "video/mp4"
+                    putExtra(Intent.EXTRA_STREAM, Uri.parse(uri))
+                    putExtra(Intent.EXTRA_TEXT, caption)
+                    setPackage(ReelAccessibilityService.INSTAGRAM_PACKAGE)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                startActivity(send)
+            } catch (e: Exception) {
+                AppLog.log("POST", "Could not launch Instagram share: ${e.message}")
+                PostWorker.completeResult(false, "Could not launch Instagram: ${e.message?.take(200)}")
+                finish()
+                return@launch
+            }
+
+            // 3) Drive the composer: Next → caption → Share.
+            setStatus("Uploading reel…")
             val result = withTimeoutOrNull(9 * 60_000L) {
                 val svc = ReelAccessibilityService.instance
                 if (svc == null) {

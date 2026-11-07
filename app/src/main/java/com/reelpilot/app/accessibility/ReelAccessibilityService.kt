@@ -274,6 +274,13 @@ class ReelAccessibilityService : AccessibilityService() {
         return "still"
     }
 
+    /**
+     * Public pre-warm helper: wait until Instagram's window is active.
+     * Called before the share intent so the reels section opens fast.
+     */
+    suspend fun awaitInstagram(timeoutMs: Long): Boolean =
+        waitForPackage(INSTAGRAM_PACKAGE, timeoutMs)
+
     // -------------------------------------------------------------- flow
 
     /**
