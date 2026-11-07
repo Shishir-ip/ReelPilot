@@ -45,7 +45,8 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
             QueueScheduler.reschedule(applicationContext)
             val fresh = dao.byId(id)
             val slot = fresh?.postAt ?: 0
-            val whenText = if (slot <= System.currentTimeMillis() + 60_000)
+            val immediate = slot <= System.currentTimeMillis() + 60_000
+            val whenText = if (immediate)
                 "as soon as possible"
             else
                 SimpleDateFormat("EEE HH:mm", Locale.getDefault()).format(Date(slot))
@@ -60,10 +61,14 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
                     if (ms > 0) "\n⏱ Length: ${ms / 60000}:${String.format(Locale.getDefault(), "%02d", (ms / 1000) % 60)}" else ""
                 } catch (e: Exception) { "" }
             } ?: ""
+            val hint = if (immediate) {
+                val pos = dao.activeItems().indexOfFirst { it.id == id } + 1
+                "\n💡 Prefer a set time? Reply /time $pos HH:MM — later videos follow the interval from it."
+            } else ""
             val s = SettingsRepo.get(applicationContext).current()
             TelegramClient(s.botToken).sendMessage(
                 item.chatId,
-                "✅ Downloaded: ${item.title}\n⏰ Will post at: $whenText$durText"
+                "✅ Downloaded: ${item.title}\n⏰ Will post at: $whenText$durText$hint"
             )
             // Post right away when it's due (first post / elapsed interval);
             // later queued items still wait for the configured interval.

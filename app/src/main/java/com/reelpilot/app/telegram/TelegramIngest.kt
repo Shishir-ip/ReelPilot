@@ -154,8 +154,13 @@ object TelegramIngest {
                 .setInputData(workDataOf("itemId" to id))
                 .build()
         )
-        val position = dao.pendingCount()
-        client.sendMessage(item.chatId, "📥 Queued (#$position): ${item.title}")
+        val active = dao.activeItems()
+        val position = active.indexOfFirst { it.id == id } + 1
+        var msg = "📥 Queued (#$position): ${item.title}"
+        if (position == 1 && dao.postedCount() == 0) {
+            msg += "\n\n⚡ It will upload as soon as possible.\n💡 Want it at a specific time? Reply:\n/time 1 HH:MM\n— every later video will follow the interval from that time."
+        }
+        client.sendMessage(item.chatId, msg)
         AppLog.log("TG", "Queued #$id: ${item.title}")
     }
 
