@@ -77,6 +77,12 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
                 dao.setPostAt(item.id, System.currentTimeMillis())
                 QueueScheduler.reschedule(applicationContext)
                 PostWorker.scheduleOneTime(applicationContext, forceNow = true)
+            } else if (item.title.startsWith("[FLOW]")) {
+                // Recording material — never posted.
+                TelegramClient(s.botToken).sendMessage(
+                    item.chatId,
+                    "🎬 Video ready for flow recording.\nOpen ReelPilot → Settings → Manual flow → pick it from the gallery → Start recorder."
+                )
             } else {
                 PostWorker.scheduleOneTime(applicationContext)
             }

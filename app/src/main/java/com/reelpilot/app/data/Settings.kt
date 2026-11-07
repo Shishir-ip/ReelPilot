@@ -27,7 +27,11 @@ data class AppSettings(
     val igOpenWaitSec: Int = 30,
     val nextWaitSec: Int = 75,
     val shareWaitSec: Int = 30,
-    val uploadGraceSec: Int = 120
+    val uploadGraceSec: Int = 120,
+    // Manual flow (recorded tap steps) — fallback if Instagram redesigns
+    val manualFlow: Boolean = false,
+    val manualSteps: String = "",        // JSON [[x,y],...] normalized 0..1
+    val manualStepDelaySec: Int = 3
 )
 
 class SettingsRepo(private val context: Context) {
@@ -46,6 +50,9 @@ class SettingsRepo(private val context: Context) {
         val NEXT_WAIT = intPreferencesKey("next_wait_sec")
         val SHARE_WAIT = intPreferencesKey("share_wait_sec")
         val UPLOAD_GRACE = intPreferencesKey("upload_grace_sec")
+        val MANUAL_FLOW = booleanPreferencesKey("manual_flow")
+        val MANUAL_STEPS = stringPreferencesKey("manual_steps")
+        val MANUAL_STEP_DELAY = intPreferencesKey("manual_step_delay_sec")
     }
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -64,7 +71,10 @@ class SettingsRepo(private val context: Context) {
             igOpenWaitSec = p[Keys.IG_OPEN_WAIT] ?: 30,
             nextWaitSec = p[Keys.NEXT_WAIT] ?: 75,
             shareWaitSec = p[Keys.SHARE_WAIT] ?: 30,
-            uploadGraceSec = p[Keys.UPLOAD_GRACE] ?: 120
+            uploadGraceSec = p[Keys.UPLOAD_GRACE] ?: 120,
+            manualFlow = p[Keys.MANUAL_FLOW] ?: false,
+            manualSteps = p[Keys.MANUAL_STEPS] ?: "",
+            manualStepDelaySec = p[Keys.MANUAL_STEP_DELAY] ?: 3
         )
     }
 
@@ -99,6 +109,11 @@ class SettingsRepo(private val context: Context) {
         it[Keys.SHARE_WAIT] = 30
         it[Keys.UPLOAD_GRACE] = 120
     }
+
+    suspend fun setManualFlow(v: Boolean) = context.dataStore.edit { it[Keys.MANUAL_FLOW] = v }
+    suspend fun setManualSteps(json: String) = context.dataStore.edit { it[Keys.MANUAL_STEPS] = json }
+    suspend fun setManualStepDelaySec(v: Int) =
+        context.dataStore.edit { it[Keys.MANUAL_STEP_DELAY] = v.coerceIn(1, 20) }
 
     companion object {
         @Volatile

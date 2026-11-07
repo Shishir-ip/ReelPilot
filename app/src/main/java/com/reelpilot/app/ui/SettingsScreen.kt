@@ -173,6 +173,111 @@ fun SettingsScreen() {
             Switch(checked = anyone, onCheckedChange = { anyone = it })
         }
 
+        // ---- Manual flow (recorded tap steps)
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Manual flow", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (settings.manualSteps.isBlank()) "No flow recorded yet — default automation is active"
+                            else "Flow recorded" + if (settings.manualFlow) " • ACTIVE" else " • OFF (default automation active)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = settings.manualFlow && settings.manualSteps.isNotBlank(),
+                        onCheckedChange = { on ->
+                            scope.launch { SettingsRepo.get(context).setManualFlow(on) }
+                        },
+                        enabled = settings.manualSteps.isNotBlank()
+                    )
+                }
+                Text(
+                    "Record your own tap sequence (auto-clicker style) for when Instagram redesigns their app. The app always handles opening Instagram and sharing the video itself — your recorded steps run right after the reels section opens.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                var flowLink by remember { mutableStateOf("") }
+                OutlinedTextField(
+                    value = flowLink,
+                    onValueChange = { flowLink = it },
+                    label = { Text("Video link (optional setup material)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        scope.launch {
+                            val s = SettingsRepo.get(context).current()
+                            if (flowLink.isBlank()) { toast("Paste a link first"); return@launch }
+                            val dao = AppDatabase.get(context).queueDao()
+                            val newId = dao.insert(
+                                QueueItem(
+                                    source = "link", url = flowLink.trim(),
+                                    title = "[FLOW] ${flowLink.trim().take(60)}",
+                                    caption = "", chatId = s.lastChatId
+                                )
+                            )
+                            WorkManager.getInstance(context).enqueue(
+                                OneTimeWorkRequestBuilder<com.reelpilot.app.worker.DownloadWorker>()
+                                    .setInputData(workDataOf("itemId" to newId))
+                                    .build()
+                            )
+                            flowLink = ""
+                            toast("Downloading — you'll get a bot message when ready")
+                        }
+                    }) { Text("⬇ Download link") }
+
+                    var pickedUri by remember { mutableStateOf<String?>(null) }
+                    val picker = androidx.activity.compose.rememberLauncherForActivityResult(
+                        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+                    ) { uri -> if (uri != null) pickedUri = uri.toString() }
+                    OutlinedButton(onClick = { picker.launch("video/*") }) {
+                        Text(if (pickedUri == null) "🖼 Pick from gallery" else "🖼 Video selected ✓")
+                    }
+
+                    Button(
+                        onClick = {
+                            val uri = pickedUri
+                            if (uri == null) { toast("Pick a video from the gallery first"); return@Button }
+                            context.startActivity(
+                                android.content.Intent(context, com.reelpilot.app.PostActivity::class.java)
+                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    .putExtra(com.reelpilot.app.PostActivity.EXTRA_URI, uri)
+                                    .putExtra(com.reelpilot.app.PostActivity.EXTRA_FLOW_SETUP, true)
+                            )
+                        },
+                        enabled = pickedUri != null
+                    ) { Text("🎙 Start recorder") }
+                }
+                Text(
+                    "In the recorder: ＋ adds a numbered marker — drag each one onto the button Instagram should tap, in order. Long-press a marker to remove it, ✔ Save when done. Markers are positions only — nothing is tapped until a real post runs.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                TimingSlider(
+                    label = "Pause between flow steps",
+                    value = settings.manualStepDelaySec,
+                    range = 1f..15f,
+                    steps = 13,
+                    suffix = "s",
+                    onChange = { scope.launch { SettingsRepo.get(context).setManualStepDelaySec(it) } }
+                )
+
+                TextButton(onClick = {
+                    scope.launch {
+                        SettingsRepo.get(context).setManualSteps("")
+                        SettingsRepo.get(context).setManualFlow(false)
+                        toast("Flow cleared — default automation active")
+                    }
+                }) { Text("Clear recorded flow") }
+            }
+        }
+
         // ---- Advanced timing
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

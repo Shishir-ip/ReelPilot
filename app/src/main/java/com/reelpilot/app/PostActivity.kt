@@ -58,6 +58,7 @@ class PostActivity : Activity() {
 
         val uri = intent.getStringExtra(EXTRA_URI)
         val caption = intent.getStringExtra(EXTRA_CAPTION) ?: ""
+        val flowSetup = intent.getBooleanExtra(EXTRA_FLOW_SETUP, false)
 
         if (uri == null) {
             AppLog.log("POST", "PostActivity started without a video uri")
@@ -66,7 +67,7 @@ class PostActivity : Activity() {
         }
 
         setStatus("Starting Instagram…")
-        AppLog.log("POST", "Waking screen and pre-warming Instagram…")
+        AppLog.log("POST", "Waking screen and pre-warming Instagram…" + if (flowSetup) " (flow recording)" else "")
 
         // Drive everything: pre-warm Instagram, then share the video into it.
         CoroutineScope(Dispatchers.Default).launch {
@@ -109,7 +110,29 @@ class PostActivity : Activity() {
                 return@launch
             }
 
-            // 3) Drive the composer: Next → caption → Share.
+            // 3) Either record a manual flow, or drive the composer.
+            if (flowSetup) {
+                setStatus("Position your tap steps,\nthen tap Save on the panel")
+                val svc = ReelAccessibilityService.instance
+                if (svc == null) {
+                    PostWorker.completeResult(false, "Accessibility service is not enabled")
+                    finish()
+                    return@launch
+                }
+                val saved = withTimeoutOrNull(10 * 60_000L) {
+                    val done = kotlinx.coroutines.CompletableDeferred<Boolean>()
+                    svc.startFlowRecording { done.complete(it) }
+                    done.await()
+                } ?: false
+                AppLog.log("FLOW", if (saved) "Flow recorded and saved" else "Flow recording cancelled/timed out")
+                delay(1500)
+                svc.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
+                delay(1000)
+                svc.killInstagram()
+                finish()
+                return@launch
+            }
+
             setStatus("Uploading reel…")
             val result = withTimeoutOrNull(9 * 60_000L) {
                 val svc = ReelAccessibilityService.instance
@@ -127,5 +150,6 @@ class PostActivity : Activity() {
     companion object {
         const val EXTRA_URI = "uri"
         const val EXTRA_CAPTION = "caption"
+        const val EXTRA_FLOW_SETUP = "flow_setup"
     }
 }

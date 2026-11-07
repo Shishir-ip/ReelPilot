@@ -21,7 +21,10 @@ object QueueScheduler {
         val settings = SettingsRepo.get(ctx).current()
         val intervalMs = settings.intervalHours * 60 * 60 * 1000L
 
-        val ready = dao.byStatus(Status.READY).sortedBy { it.createdAt }
+        // [FLOW] items are recording material only — they never get a slot.
+        val ready = dao.byStatus(Status.READY)
+            .filter { !it.title.startsWith("[FLOW]") }
+            .sortedBy { it.createdAt }
         if (ready.isEmpty()) return
 
         var slot = maxOf(settings.nextPostAt, System.currentTimeMillis())

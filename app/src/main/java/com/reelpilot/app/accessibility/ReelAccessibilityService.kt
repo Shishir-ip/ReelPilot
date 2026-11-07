@@ -13,6 +13,7 @@ import com.reelpilot.app.util.AppLog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
@@ -213,7 +214,7 @@ class ReelAccessibilityService : AccessibilityService() {
      * so no leftover screen, dialog or draft can interfere with the next
      * automated posting session.
      */
-    private fun killInstagram() {
+    fun killInstagram() {
         try {
             val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
             am.killBackgroundProcesses(INSTAGRAM_PACKAGE)
@@ -278,6 +279,133 @@ class ReelAccessibilityService : AccessibilityService() {
     suspend fun awaitInstagram(timeoutMs: Long): Boolean =
         waitForPackage(INSTAGRAM_PACKAGE, timeoutMs)
 
+    // ------------------------------------------------- flow recorder overlay
+
+    /**
+     * Shows a floating recorder panel over Instagram: "+ Tap" drops a
+     * numbered marker the user drags to a position; "Save" stores the steps;
+     * "Cancel" aborts. The rest of the screen stays fully touchable.
+     */
+    fun startFlowRecording(onDone: (Boolean) -> Unit) {
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        main.post {
+            try {
+                val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+                val dm = resources.displayMetrics
+                val markers = mutableListOf<Pair<android.widget.TextView, android.view.WindowManager.LayoutParams>>()
+                var stepCount = 0
+
+                val overlayFlags = android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY or
+                    android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                fun panelParams(y: Int) = android.view.WindowManager.LayoutParams().apply {
+                    type = android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                    flags = overlayFlags
+                    format = android.graphics.PixelFormat.TRANSLUCENT
+                    width = android.view.WindowManager.LayoutParams.WRAP_CONTENT
+                    height = android.view.WindowManager.LayoutParams.WRAP_CONTENT
+                    x = 24
+                    this.y = y
+                    gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                }
+
+                val panel = android.widget.LinearLayout(this).apply {
+                    orientation = android.widget.LinearLayout.VERTICAL
+                    setBackgroundColor(0xE6101014.toInt())
+                    setPadding(20, 16, 20, 16)
+                }
+                fun button(label: String, onClick: () -> Unit) = android.widget.Button(this).apply {
+                    text = label
+                    setOnClickListener { onClick() }
+                }
+
+                fun removeMarker(tv: android.widget.TextView, lp: android.view.WindowManager.LayoutParams) {
+                    wm.removeView(tv)
+                    markers.removeIf { it.first == tv }
+                    // Renumber remaining markers
+                    markers.sortedBy { it.second.y }.forEachIndexed { i, (v, l) -> v.text = "${i + 1}" }
+                }
+
+                fun addMarker() {
+                    stepCount++
+                    val tv = android.widget.TextView(this).apply {
+                        text = "$stepCount"
+                        setTextColor(android.graphics.Color.WHITE)
+                        textSize = 22f
+                        gravity = android.view.Gravity.CENTER
+                        setBackgroundColor(0xCC6750A4.toInt())
+                        setPadding(28, 20, 28, 20)
+                    }
+                    val lp = android.view.WindowManager.LayoutParams().apply {
+                        type = android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+                        flags = overlayFlags
+                        format = android.graphics.PixelFormat.TRANSLUCENT
+                        width = android.view.WindowManager.LayoutParams.WRAP_CONTENT
+                        height = android.view.WindowManager.LayoutParams.WRAP_CONTENT
+                        x = dm.widthPixels / 2 - 60
+                        y = dm.heightPixels / 2
+                        gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                    }
+                    // Drag handling
+                    var downX = 0f; var downY = 0f; var baseX = 0; var baseY = 0
+                    tv.setOnTouchListener { v, ev ->
+                        when (ev.actionMasked) {
+                            android.view.MotionEvent.ACTION_DOWN -> {
+                                downX = ev.rawX; downY = ev.rawY; baseX = lp.x; baseY = lp.y; true
+                            }
+                            android.view.MotionEvent.ACTION_MOVE -> {
+                                lp.x = (baseX + (ev.rawX - downX)).toInt()
+                                    .coerceIn(0, dm.widthPixels - 120)
+                                lp.y = (baseY + (ev.rawY - downY)).toInt()
+                                    .coerceIn(0, dm.heightPixels - 160)
+                                wm.updateViewLayout(v, lp); true
+                            }
+                            else -> false
+                        }
+                    }
+                    tv.setOnLongClickListener { removeMarker(tv, lp); true }
+                    wm.addView(tv, lp)
+                    markers.add(tv to lp)
+                }
+
+                var finished = false
+                fun end(save: Boolean) {
+                    if (finished) return
+                    finished = true
+                    wm.removeView(panel)
+                    markers.forEach { (v, _) -> runCatching { wm.removeView(v) } }
+                    if (save) {
+                        val steps = markers.sortedBy { it.second.y }.map { (v, lp) ->
+                            listOf(
+                                (lp.x + 60f) / dm.widthPixels,
+                                (lp.y + 50f) / dm.heightPixels
+                            )
+                        }
+                        val json = org.json.JSONArray().apply {
+                            steps.forEach { s -> put(org.json.JSONArray(s)) }
+                        }.toString()
+                        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            com.reelpilot.app.data.SettingsRepo.get(applicationContext).setManualSteps(json)
+                            com.reelpilot.app.data.SettingsRepo.get(applicationContext).setManualFlow(true)
+                            AppLog.log("FLOW", "Saved manual flow with ${steps.size} steps")
+                        }
+                    }
+                    onDone(save)
+                }
+
+                panel.addView(button("＋ Add tap step", { addMarker() }))
+                panel.addView(button("✔ Save flow", { end(true) }))
+                panel.addView(button("✖ Cancel", { end(false) }))
+
+                wm.addView(panel, panelParams(80))
+                addMarker()
+                AppLog.log("FLOW", "Recorder open — drag the numbered marker(s), then Save")
+            } catch (e: Exception) {
+                AppLog.log("FLOW", "Recorder failed: ${e.message}")
+                onDone(false)
+            }
+        }
+    }
+
     // -------------------------------------------------------------- flow
 
     /**
@@ -294,84 +422,100 @@ class ReelAccessibilityService : AccessibilityService() {
             }
             delay(2000)
 
-            // 1) Share sheet → tap "Reels" (some builds open the editor directly)
-            val reelOption = waitFor(
-                words = listOf("reel", "reels"),
-                timeoutMs = 20_000,
-                step = "share sheet Reels option"
-            )
-            if (reelOption != null) {
-                step("Tapping Reels")
-                tap(reelOption)
-                delay(2500)
-            } else {
-                step("No share sheet — assuming editor opened directly")
-            }
-
-            // 2) Clip preview screen → Next (cold starts load slowly — be patient)
-            val next = waitFor(words = listOf("next"), idWords = listOf("next"), timeoutMs = t.nextWaitSec * 1000L, step = "Next button")
-                ?: return@withContext Pair(false, "Could not find the Next button — Instagram UI may have changed.")
-            step("Tapping Next")
-            tap(next)
-            delay(3000)
-
-            // 3) Final share screen: caption + Share button
-            if (caption.isNotBlank()) {
-                var edit = findEditable()
-                if (edit == null) {
-                    // Caption might be behind an "Add a caption" button
-                    root()?.let { r ->
-                        findText(r, listOf("add a caption", "write a caption", "caption"))?.let {
-                            tap(it)
-                            delay(1200)
-                        }
-                    }
-                    edit = findEditable()
-                }
-                if (edit != null) {
-                    step("Typing caption")
-                    setText(edit, caption)
-                    delay(800)
-                    // Close caption sheet if one opened (Done / ✓ button)
-                    root()?.let { r ->
-                        findIn(r, listOf("done"), idWords = listOf("done", "primary_button"))?.let {
-                            tap(it)
-                            delay(800)
-                        }
-                    }
-                } else {
-                    step("No caption field found — posting without caption")
-                }
-            }
-
-            // 3.5) Make sure the bottom bar (Share button) is on screen
-            swipeUp()
-
-            // 4) Tap Share, verify it actually went through, retry up to 3 times.
+            // Manual flow: replay the user's recorded tap steps instead of
+            // the built-in node matching. The app always handles the warm-up
+            // and the share intent itself; the steps start from here.
+            val steps = parseManualSteps(t.manualSteps)
             var shareResult = "still"
-            var attempts = 0
-            while (attempts < 3) {
-                val share = waitFor(
-                    words = listOf("share"),
-                    idWords = listOf("share"),
-                    timeoutMs = t.shareWaitSec * 1000L,
-                    step = "Share button"
-                )
-                if (share == null) {
-                    if (attempts > 0) {
-                        // Share button vanished after we already tapped — upload in progress
-                        shareResult = "gone"
-                        break
-                    }
-                    return@withContext Pair(false, "Could not find the Share button — Instagram UI may have changed.")
+            if (t.manualFlow && steps.isNotEmpty()) {
+                step("Manual flow: replaying ${steps.size} recorded steps")
+                delay(5000)  // let the reels upload section finish loading
+                val dm = resources.displayMetrics
+                for ((i, s) in steps.withIndex()) {
+                    tapAt(s[0] * dm.widthPixels, s[1] * dm.heightPixels)
+                    step("Manual step ${i + 1}/${steps.size}")
+                    delay(t.manualStepDelaySec * 1000L)
                 }
-                step("Tapping Share (attempt ${attempts + 1})")
-                tap(share)
+                shareResult = waitShareResult(90_000)
+            } else {
+                // 1) Share sheet → tap "Reels" (some builds open the editor directly)
+                val reelOption = waitFor(
+                    words = listOf("reel", "reels"),
+                    timeoutMs = 20_000,
+                    step = "share sheet Reels option"
+                )
+                if (reelOption != null) {
+                    step("Tapping Reels")
+                    tap(reelOption)
+                    delay(2500)
+                } else {
+                    step("No share sheet — assuming editor opened directly")
+                }
+
+                // 2) Clip preview screen → Next (cold starts load slowly — be patient)
+                val next = waitFor(words = listOf("next"), idWords = listOf("next"), timeoutMs = t.nextWaitSec * 1000L, step = "Next button")
+                    ?: return@withContext Pair(false, "Could not find the Next button — Instagram UI may have changed.")
+                step("Tapping Next")
+                tap(next)
                 delay(3000)
-                shareResult = waitShareResult(60_000)
-                if (shareResult != "still") break
-                attempts++
+
+                // 3) Final share screen: caption + Share button
+                if (caption.isNotBlank()) {
+                    var edit = findEditable()
+                    if (edit == null) {
+                        // Caption might be behind an "Add a caption" button
+                        root()?.let { r ->
+                            findText(r, listOf("add a caption", "write a caption", "caption"))?.let {
+                                tap(it)
+                                delay(1200)
+                            }
+                        }
+                        edit = findEditable()
+                    }
+                    if (edit != null) {
+                        step("Typing caption")
+                        setText(edit, caption)
+                        delay(800)
+                        // Close caption sheet if one opened (Done / ✓ button)
+                        root()?.let { r ->
+                            findIn(r, listOf("done"), idWords = listOf("done", "primary_button"))?.let {
+                                tap(it)
+                                delay(800)
+                            }
+                        }
+                    } else {
+                        step("No caption field found — posting without caption")
+                    }
+                }
+
+                // 3.5) Make sure the bottom bar (Share button) is on screen
                 swipeUp()
+
+                // 4) Tap Share, verify it actually went through, retry up to 3 times.
+                var attempts = 0
+                while (attempts < 3) {
+                    val share = waitFor(
+                        words = listOf("share"),
+                        idWords = listOf("share"),
+                        timeoutMs = t.shareWaitSec * 1000L,
+                        step = "Share button"
+                    )
+                    if (share == null) {
+                        if (attempts > 0) {
+                            // Share button vanished after we already tapped — upload in progress
+                            shareResult = "gone"
+                            break
+                        }
+                        return@withContext Pair(false, "Could not find the Share button — Instagram UI may have changed.")
+                    }
+                    step("Tapping Share (attempt ${attempts + 1})")
+                    tap(share)
+                    delay(3000)
+                    shareResult = waitShareResult(60_000)
+                    if (shareResult != "still") break
+                    attempts++
+                    swipeUp()
+                }
             }
             AppLog.log("IG", "postReel finished, shareResult=$shareResult")
             // Leave Instagram's UI immediately…
@@ -391,6 +535,16 @@ class ReelAccessibilityService : AccessibilityService() {
             AppLog.log("IG", "postReel error: ${e.message}")
             Pair(false, "Automation error: ${e.message?.take(200)}")
         }
+    }
+
+    private fun parseManualSteps(json: String): List<List<Float>> = try {
+        val arr = org.json.JSONArray(json)
+        (0 until arr.length()).map { i ->
+            val a = arr.getJSONArray(i)
+            listOf(a.getDouble(0).toFloat(), a.getDouble(1).toFloat())
+        }
+    } catch (e: Exception) {
+        emptyList()
     }
 
     private fun step(msg: String) = AppLog.log("IG", msg)
