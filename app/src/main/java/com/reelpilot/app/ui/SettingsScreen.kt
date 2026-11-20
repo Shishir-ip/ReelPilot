@@ -288,6 +288,86 @@ fun SettingsScreen() {
             }
         }
 
+        // ---- Storage, folder watching & battery
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Folder, battery & cleanup", style = MaterialTheme.typography.titleMedium)
+
+                // Watched folder
+                Text("Watched folder", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Pick a folder on the phone. Any video you copy into it (e.g. over USB) is auto-queued — each video only once.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val folderName = remember(settings.watchFolderUri) {
+                    try {
+                        settings.watchFolderUri.takeIf { it.isNotBlank() }?.let {
+                            androidx.documentfile.provider.DocumentFile.fromTreeUri(
+                                context, android.net.Uri.parse(it)
+                            )?.name
+                        } ?: ""
+                    } catch (e: Exception) ""
+                }
+                Text(
+                    if (folderName.isNullOrBlank()) "No folder selected" else "📁 Watching: $folderName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (folderName.isNullOrBlank()) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.primary
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    val treePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+                        androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
+                    ) { uri ->
+                        if (uri != null) {
+                            scope.launch {
+                                runCatching {
+                                    context.contentResolver.takePersistableUriPermission(
+                                        uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                    )
+                                }
+                                SettingsRepo.get(context).setWatchFolderUri(uri.toString())
+                                toast("Folder set — new videos there will be auto-queued")
+                            }
+                        }
+                    }
+                    OutlinedButton(onClick = { treePicker.launch(null) }, modifier = Modifier.weight(1f)) {
+                        Text("📁 Choose folder", maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = { scope.launch { SettingsRepo.get(context).setWatchFolderUri("") } },
+                        enabled = settings.watchFolderUri.isNotBlank(),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Stop watching", maxLines = 1) }
+                }
+
+                // Battery alert
+                TimingSlider(
+                    label = "Low-battery bot alert" + if (settings.batteryAlertPct == 0) " (off)" else "",
+                    value = settings.batteryAlertPct,
+                    range = 0f..50f,
+                    steps = 49,
+                    suffix = "%",
+                    onChange = { scope.launch { SettingsRepo.get(context).setBatteryAlertPct(it) } }
+                )
+
+                // Auto-delete
+                TimingSlider(
+                    label = "Auto-delete posted videos after" + if (settings.autoDeleteDays == 0) " (off)" else "",
+                    value = settings.autoDeleteDays,
+                    range = 0f..30f,
+                    steps = 29,
+                    suffix = if (settings.autoDeleteDays == 1) " day" else " days",
+                    onChange = { scope.launch { SettingsRepo.get(context).setAutoDeleteDays(it) } }
+                )
+                Text(
+                    "Only videos that were successfully posted are deleted — queued, downloading or failed videos are never touched.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
         // ---- Advanced timing
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

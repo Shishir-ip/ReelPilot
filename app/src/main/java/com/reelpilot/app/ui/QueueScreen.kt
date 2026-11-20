@@ -40,6 +40,9 @@ import com.reelpilot.app.data.AppDatabase
 import com.reelpilot.app.data.QueueItem
 import com.reelpilot.app.data.SettingsRepo
 import com.reelpilot.app.data.Status
+import com.reelpilot.app.telegram.TelegramClient
+import com.reelpilot.app.util.AppLog
+import com.reelpilot.app.util.Format
 import com.reelpilot.app.worker.PostWorker
 import com.reelpilot.app.worker.QueueScheduler
 import kotlinx.coroutines.launch
@@ -47,6 +50,56 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+
+/**
+ * Adds a video picked from the gallery straight into the queue at the next
+ * serial position. It's already on the phone, so no download step — it goes
+ * READY and takes the next upload slot.
+ */
+private suspend fun addGalleryVideo(context: android.content.Context, uri: android.net.Uri) {
+    try {
+        val s = SettingsRepo.get(context).current()
+        val dao = AppDatabase.get(context).queueDao()
+
+        val name = context.contentResolver.query(
+            uri, arrayOf(android.provider.MediaStore.Video.Media.DISPLAY_NAME), null, null, null
+        )?.use { c -> if (c.moveToFirst()) c.getString(0) } ?: "gallery_video"
+
+        val durMs = try {
+            val r = android.media.MediaMetadataRetriever()
+            r.setDataSource(context, uri)
+            val ms = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0
+            r.release()
+            ms
+        } catch (e: Exception) 0
+
+        val item = QueueItem(
+            source = "gallery",
+            url = uri.toString(),
+            title = name,
+            caption = "",
+            chatId = s.lastChatId,
+            status = Status.READY,
+            progress = 100,
+            localUri = uri.toString()
+        )
+        dao.insert(item)
+        QueueScheduler.reschedule(context)
+        PostWorker.scheduleOneTime(context)
+
+        val pos = dao.activeItems().indexOfFirst { it.title == name } + 1
+        val dur = if (durMs > 0) " (⏱ ${Format.duration(durMs)})" else ""
+        if (s.lastChatId > 0 && s.botToken.isNotBlank()) {
+            TelegramClient(s.botToken).sendMessage(
+                s.lastChatId,
+                "📥 Queued (#$pos): $name$dur"
+            )
+        }
+        AppLog.log("QUEUE", "Gallery video added: $name")
+    } catch (e: Exception) {
+        AppLog.log("QUEUE", "Gallery add failed: ${e.message}")
+    }
+}
 
 private fun statusColor(status: String): Color = when (status) {
     Status.QUEUED -> Color(0xFF9E9E9E)
@@ -85,6 +138,16 @@ fun QueueScreen() {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Queue", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            var pickedUri by remember { mutableStateOf<String?>(null) }
+            val galleryPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+                androidx.activity.result.contract.ActivityResultContracts.GetContent()
+            ) { uri ->
+                if (uri != null) {
+                    pickedUri = uri.toString()
+                    scope.launch { addGalleryVideo(context, uri) }
+                }
+            }
+            TextButton(onClick = { galleryPicker.launch("video/*") }) { Text("➕ Add") }
             TextButton(onClick = {
                 scope.launch {
                     dao.clearPosted()

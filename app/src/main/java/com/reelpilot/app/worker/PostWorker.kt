@@ -126,7 +126,8 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 AppLog.log("POST", "Result: ok=$ok, $msg")
 
                 if (ok) {
-                    dao.update(item.copy(status = Status.POSTED))
+                    // Timestamp the upload for the auto-delete housekeeping.
+                    dao.update(item.copy(status = Status.POSTED, uploadedAt = System.currentTimeMillis()))
                     val nextAt = System.currentTimeMillis() + settings.intervalHours * 60 * 60 * 1000L
                     SettingsRepo.get(ctx).setNextPostAt(nextAt)
                     val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nextAt))

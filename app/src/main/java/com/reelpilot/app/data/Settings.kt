@@ -31,7 +31,11 @@ data class AppSettings(
     // Manual flow (recorded tap steps) — fallback if Instagram redesigns
     val manualFlow: Boolean = false,
     val manualSteps: String = "",        // JSON [[x,y],...] normalized 0..1
-    val manualStepDelaySec: Int = 3
+    val manualStepDelaySec: Int = 3,
+    // Battery / storage / housekeeping
+    val batteryAlertPct: Int = 20,       // 0 = alerts off
+    val autoDeleteDays: Int = 7,         // keep posted videos N days; 0 = never delete
+    val watchFolderUri: String = ""      // SAF tree uri; empty = folder watching off
 )
 
 class SettingsRepo(private val context: Context) {
@@ -53,6 +57,9 @@ class SettingsRepo(private val context: Context) {
         val MANUAL_FLOW = booleanPreferencesKey("manual_flow")
         val MANUAL_STEPS = stringPreferencesKey("manual_steps")
         val MANUAL_STEP_DELAY = intPreferencesKey("manual_step_delay_sec")
+        val BATTERY_ALERT = intPreferencesKey("battery_alert_pct")
+        val AUTO_DELETE_DAYS = intPreferencesKey("auto_delete_days")
+        val WATCH_FOLDER = stringPreferencesKey("watch_folder_uri")
     }
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -74,7 +81,10 @@ class SettingsRepo(private val context: Context) {
             uploadGraceSec = p[Keys.UPLOAD_GRACE] ?: 120,
             manualFlow = p[Keys.MANUAL_FLOW] ?: false,
             manualSteps = p[Keys.MANUAL_STEPS] ?: "",
-            manualStepDelaySec = p[Keys.MANUAL_STEP_DELAY] ?: 3
+            manualStepDelaySec = p[Keys.MANUAL_STEP_DELAY] ?: 3,
+            batteryAlertPct = p[Keys.BATTERY_ALERT] ?: 20,
+            autoDeleteDays = p[Keys.AUTO_DELETE_DAYS] ?: 7,
+            watchFolderUri = p[Keys.WATCH_FOLDER] ?: ""
         )
     }
 
@@ -114,6 +124,9 @@ class SettingsRepo(private val context: Context) {
     suspend fun setManualSteps(json: String) = context.dataStore.edit { it[Keys.MANUAL_STEPS] = json }
     suspend fun setManualStepDelaySec(v: Int) =
         context.dataStore.edit { it[Keys.MANUAL_STEP_DELAY] = v.coerceIn(1, 20) }
+    suspend fun setBatteryAlertPct(v: Int) = context.dataStore.edit { it[Keys.BATTERY_ALERT] = v.coerceIn(0, 50) }
+    suspend fun setAutoDeleteDays(v: Int) = context.dataStore.edit { it[Keys.AUTO_DELETE_DAYS] = v.coerceIn(0, 30) }
+    suspend fun setWatchFolderUri(v: String) = context.dataStore.edit { it[Keys.WATCH_FOLDER] = v }
 
     companion object {
         @Volatile

@@ -151,6 +151,24 @@ object TelegramCommands {
                 )
             }
 
+            "/battery" -> {
+                client.sendMessage(
+                    chat,
+                    com.reelpilot.app.worker.Maintenance.batteryText(context) +
+                        "\n🪨 Low-battery alert at ${settings.batteryAlertPct}%"
+                )
+            }
+
+            "/storage" -> {
+                client.sendMessage(
+                    chat,
+                    com.reelpilot.app.worker.Maintenance.storageText() +
+                        "\n🗑 Auto-delete: " + if (settings.autoDeleteDays > 0)
+                        "posted videos kept ${settings.autoDeleteDays} day(s)"
+                    else "off"
+                )
+            }
+
             "/done" -> {
                 val posted = dao.byStatus(Status.POSTED)
                 if (posted.isEmpty()) {
@@ -191,6 +209,8 @@ object TelegramCommands {
         /postnow — post the next video immediately
         /interval 3 — set posting interval (1–72 h)
         /caption text — set default caption
+        /battery — phone battery level
+        /storage — free storage space
         /done — recently posted videos
         /logs — last events
 

@@ -84,4 +84,35 @@ object YtDlpBridge {
     /** Saves a Telegram-hosted file into the gallery. */
     fun saveDownloadedFile(context: Context, localFile: File, displayName: String): String =
         saveToGallery(context, localFile, sanitize(displayName))
+
+    /** Copies an arbitrary stream into the shared MediaStore (watched-folder adds). */
+    fun saveStreamToGallery(context: Context, input: java.io.InputStream, displayName: String, mime: String): String {
+        val resolver = context.contentResolver
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Video.Media.MIME_TYPE, mime)
+                put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/ReelPilot")
+                put(MediaStore.Video.Media.IS_PENDING, 1)
+            }
+            val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val uri = resolver.insert(collection, values)
+                ?: throw RuntimeException("MediaStore insert failed")
+            resolver.openOutputStream(uri)?.use { out -> input.use { it.copyTo(out) } }
+                ?: throw RuntimeException("Could not open MediaStore stream")
+            values.clear()
+            values.put(MediaStore.Video.Media.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            return uri.toString()
+        } else {
+            val dir = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                "ReelPilot"
+            ).apply { mkdirs() }
+            val dest = File(dir, displayName)
+            input.use { inp -> dest.outputStream().use { inp.copyTo(it) } }
+            MediaScannerConnection.scanFile(context, arrayOf(dest.absolutePath), arrayOf(mime), null)
+            return Uri.fromFile(dest).toString()
+        }
+    }
 }

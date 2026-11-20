@@ -13,8 +13,8 @@ android {
         applicationId = "com.reelpilot.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.7.2"
+        versionCode = 20
+        versionName = "1.8.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -98,6 +98,7 @@ dependencies {
 
     implementation("androidx.work:work-runtime-ktx:2.9.0")
     implementation("androidx.datastore:datastore-preferences:1.0.0")
+    implementation("androidx.documentfile:documentfile:1.0.1")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

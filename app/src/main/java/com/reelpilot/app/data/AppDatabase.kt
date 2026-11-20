@@ -35,6 +35,7 @@ data class QueueItem(
     val progress: Int = 0,              // download progress 0..100
     val localUri: String? = null,       // MediaStore content uri once downloaded
     val postAt: Long = 0,               // scheduled upload time (0 = automatic slot)
+    val uploadedAt: Long = 0,           // when the reel actually went live (for auto-delete)
     val error: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
@@ -77,6 +78,9 @@ interface QueueDao {
     @Query("SELECT COUNT(*) FROM queue WHERE status = 'POSTED'")
     suspend fun postedCount(): Int
 
+    @Query("SELECT * FROM queue WHERE status = 'POSTED' AND uploadedAt > 0 AND uploadedAt < :cutoff AND localUri IS NOT NULL LIMIT 50")
+    suspend fun expiredPosted(cutoff: Long): List<QueueItem>
+
     @Insert
     suspend fun insert(item: QueueItem): Long
 
@@ -93,7 +97,7 @@ interface QueueDao {
     suspend fun retry(id: Long)
 }
 
-@Database(entities = [QueueItem::class], version = 2, exportSchema = false)
+@Database(entities = [QueueItem::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun queueDao(): QueueDao
 
@@ -107,6 +111,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE queue ADD COLUMN uploadedAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -114,7 +124,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "reelpilot.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .build().also { instance = it }
             }
     }

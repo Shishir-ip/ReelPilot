@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import com.reelpilot.app.worker.PostWorker
+import com.reelpilot.app.worker.WatchWorker
 
 class ReelPilotApp : Application() {
 
@@ -12,6 +13,7 @@ class ReelPilotApp : Application() {
         super.onCreate()
         createChannels()
         PostWorker.schedulePeriodic(this)
+        WatchWorker.schedule(this)
     }
 
     private fun createChannels() {
