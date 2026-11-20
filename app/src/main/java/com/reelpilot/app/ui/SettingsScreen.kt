@@ -307,7 +307,7 @@ fun SettingsScreen() {
                                 context, android.net.Uri.parse(it)
                             )?.name
                         } ?: ""
-                    } catch (e: Exception) ""
+                    } catch (e: Exception) { "" }
                 }
                 Text(
                     if (folderName.isNullOrBlank()) "No folder selected" else "📁 Watching: $folderName",

@@ -61,7 +61,7 @@ object FolderWatcher {
                         val ms = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0
                         r.release()
                         ms
-                    } catch (e: Exception) 0
+                    } catch (e: Exception) { 0 }
 
                     dao.insert(QueueItem(
                         source = "gallery",

@@ -71,7 +71,7 @@ private suspend fun addGalleryVideo(context: android.content.Context, uri: andro
             val ms = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0
             r.release()
             ms
-        } catch (e: Exception) 0
+        } catch (e: Exception) { 0 }
 
         val item = QueueItem(
             source = "gallery",
