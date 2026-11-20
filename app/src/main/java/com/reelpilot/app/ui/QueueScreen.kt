@@ -63,7 +63,7 @@ private suspend fun addGalleryVideo(context: android.content.Context, uri: andro
 
         val name = context.contentResolver.query(
             uri, arrayOf(android.provider.MediaStore.Video.Media.DISPLAY_NAME), null, null, null
-        )?.use { c -> if (c.moveToFirst()) c.getString(0) } ?: "gallery_video"
+        )?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "gallery_video"
 
         val durMs = try {
             val r = android.media.MediaMetadataRetriever()
