@@ -141,17 +141,23 @@ class SettingsRepo(private val context: Context) {
     suspend fun setFlow(pkg: String, steps: List<List<Float>>) {
         val map = parseFlows(current().flows).toMutableMap()
         map[pkg] = steps
-        setFlows(org.json.JSONObject(map.mapValues { entry ->
-            org.json.JSONArray().apply { entry.value.forEach { s -> put(org.json.JSONArray(s)) } }
-        }.toString()))
+        setFlows(flowsToJson(map))
     }
 
     suspend fun clearFlow(pkg: String) {
         val map = parseFlows(current().flows).toMutableMap()
         map.remove(pkg)
-        setFlows(org.json.JSONObject(map.mapValues { entry ->
-            org.json.JSONArray().apply { entry.value.forEach { s -> put(org.json.JSONArray(s)) } }
-        }.toString()))
+        setFlows(flowsToJson(map))
+    }
+
+    private fun flowsToJson(map: Map<String, List<List<Float>>>): String {
+        val root = org.json.JSONObject()
+        map.forEach { (pkg, steps) ->
+            val arr = org.json.JSONArray()
+            steps.forEach { s -> arr.put(org.json.JSONArray(s)) }
+            root.put(pkg, arr)
+        }
+        return root.toString()
     }
 
     companion object {
