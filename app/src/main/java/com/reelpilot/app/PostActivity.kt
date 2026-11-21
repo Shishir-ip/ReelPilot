@@ -19,8 +19,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * Wakes the screen and hands the video to Instagram. Shows a visible status
- * so a slow Instagram cold start never looks like the app froze.
+ * Wakes the screen, pre-warms the target app and hands the video over via a
+ * share intent. Shows a visible status so slow cold starts never look frozen.
  */
 class PostActivity : Activity() {
 
@@ -59,6 +59,8 @@ class PostActivity : Activity() {
         val uri = intent.getStringExtra(EXTRA_URI)
         val caption = intent.getStringExtra(EXTRA_CAPTION) ?: ""
         val flowSetup = intent.getBooleanExtra(EXTRA_FLOW_SETUP, false)
+        val target = intent.getStringExtra(EXTRA_TARGET)
+            ?: ReelAccessibilityService.INSTAGRAM_PACKAGE
 
         if (uri == null) {
             AppLog.log("POST", "PostActivity started without a video uri")
@@ -66,22 +68,20 @@ class PostActivity : Activity() {
             return
         }
 
-        setStatus("Starting Instagram…")
-        AppLog.log("POST", "Waking screen and pre-warming Instagram…" + if (flowSetup) " (flow recording)" else "")
+        setStatus("Starting ${appLabel(target)}…")
+        AppLog.log("POST", "Waking screen and pre-warming $target…" + if (flowSetup) " (flow recording)" else "")
 
-        // Drive everything: pre-warm Instagram, then share the video into it.
+        // Drive everything: pre-warm the target app, then share the video into it.
         CoroutineScope(Dispatchers.Default).launch {
-            // 1) Open Instagram normally first so its process is warm —
-            //    sharing into a warm app opens the reels section quickly,
-            //    sharing into a closed one is slow and flaky.
+            // 1) Open the app normally first so its process is warm —
+            //    sharing into a warm app opens the composer quickly.
             val warmOk = try {
-                val launch = packageManager.getLaunchIntentForPackage(
-                    ReelAccessibilityService.INSTAGRAM_PACKAGE
-                )?.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+                val launch = packageManager.getLaunchIntentForPackage(target)
+                    ?.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                 if (launch != null) {
                     startActivity(launch)
                     val svc = ReelAccessibilityService.instance
-                    svc?.awaitInstagram(25_000) ?: false
+                    svc?.awaitPackage(target, 25_000) ?: false
                 } else false
             } catch (e: Exception) {
                 AppLog.log("POST", "Pre-warm failed: ${e.message}")
@@ -91,21 +91,21 @@ class PostActivity : Activity() {
             delay(warmupSec * 1000L)  // let the feed settle
 
             // 2) Now share the video into the warm app.
-            setStatus("Opening reels upload…")
+            setStatus("Opening upload screen…")
             try {
                 val send = Intent(Intent.ACTION_SEND).apply {
                     type = "video/mp4"
                     putExtra(Intent.EXTRA_STREAM, Uri.parse(uri))
                     putExtra(Intent.EXTRA_TEXT, caption)
-                    setPackage(ReelAccessibilityService.INSTAGRAM_PACKAGE)
+                    setPackage(target)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                     addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
                 startActivity(send)
             } catch (e: Exception) {
-                AppLog.log("POST", "Could not launch Instagram share: ${e.message}")
-                PostWorker.completeResult(false, "Could not launch Instagram: ${e.message?.take(200)}")
+                AppLog.log("POST", "Could not launch share into $target: ${e.message}")
+                PostWorker.completeResult(false, "Could not launch ${appLabel(target)}: ${e.message?.take(200)}")
                 finish()
                 return@launch
             }
@@ -121,14 +121,14 @@ class PostActivity : Activity() {
                 }
                 val saved = withTimeoutOrNull(10 * 60_000L) {
                     val done = kotlinx.coroutines.CompletableDeferred<Boolean>()
-                    svc.startFlowRecording { done.complete(it) }
+                    svc.startFlowRecording(target) { done.complete(it) }
                     done.await()
                 } ?: false
-                AppLog.log("FLOW", if (saved) "Flow recorded and saved" else "Flow recording cancelled/timed out")
+                AppLog.log("FLOW", if (saved) "Flow for $target recorded and saved" else "Flow recording cancelled/timed out")
                 delay(1500)
                 svc.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
                 delay(1000)
-                svc.killInstagram()
+                svc.killApp(target)
                 finish()
                 return@launch
             }
@@ -138,8 +138,10 @@ class PostActivity : Activity() {
                 val svc = ReelAccessibilityService.instance
                 if (svc == null) {
                     Pair(false, "Accessibility service is not enabled")
+                } else if (target == ReelAccessibilityService.INSTAGRAM_PACKAGE) {
+                    svc.postReel(caption, target)
                 } else {
-                    svc.postReel(caption)
+                    svc.postFlow(caption, target)
                 }
             } ?: Pair(false, "Posting timed out")
             PostWorker.completeResult(result.first, result.second)
@@ -147,9 +149,16 @@ class PostActivity : Activity() {
         }
     }
 
+    private fun appLabel(pkg: String): String = try {
+        packageManager.getApplicationInfo(pkg, 0).loadLabel(packageManager).toString()
+    } catch (e: Exception) {
+        pkg.substringAfterLast('.').ifBlank { pkg }
+    }
+
     companion object {
         const val EXTRA_URI = "uri"
         const val EXTRA_CAPTION = "caption"
         const val EXTRA_FLOW_SETUP = "flow_setup"
+        const val EXTRA_TARGET = "target_package"
     }
 }

@@ -274,6 +274,16 @@ private fun QueueCard(
                 )
             }
 
+            // Multi-app progress
+            val doneApps = item.doneTargets.split(',').count { it.isNotBlank() }
+            if (doneApps > 0 && item.status != Status.POSTED) {
+                Text(
+                    "🌍 $doneApps app(s) already posted — remaining apps post next",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
             // Scheduled upload time
             when {
                 (item.status == Status.READY || item.status == Status.POSTING) && item.postAt > 0 -> {

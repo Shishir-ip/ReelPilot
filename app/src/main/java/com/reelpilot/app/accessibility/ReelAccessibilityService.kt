@@ -210,17 +210,17 @@ class ReelAccessibilityService : AccessibilityService() {
     private fun home() = performGlobalAction(GLOBAL_ACTION_HOME)
 
     /**
-     * After a post, force-close Instagram completely (background process kill)
-     * so no leftover screen, dialog or draft can interfere with the next
-     * automated posting session.
+     * After a post, force-close the target app completely (background process
+     * kill) so no leftover screen, dialog or draft can interfere with the
+     * next automated posting session.
      */
-    fun killInstagram() {
+    fun killApp(pkg: String) {
         try {
             val am = getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-            am.killBackgroundProcesses(INSTAGRAM_PACKAGE)
-            AppLog.log("IG", "Instagram force-closed")
+            am.killBackgroundProcesses(pkg)
+            AppLog.log("IG", "Target app force-closed: $pkg")
         } catch (e: Exception) {
-            AppLog.log("IG", "Could not kill Instagram: ${e.message}")
+            AppLog.log("IG", "Could not kill $pkg: ${e.message}")
         }
     }
 
@@ -273,11 +273,11 @@ class ReelAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Public pre-warm helper: wait until Instagram's window is active.
-     * Called before the share intent so the reels section opens fast.
+     * Public pre-warm helper: wait until the target app's window is active.
+     * Called before the share intent so the composer opens fast.
      */
-    suspend fun awaitInstagram(timeoutMs: Long): Boolean =
-        waitForPackage(INSTAGRAM_PACKAGE, timeoutMs)
+    suspend fun awaitPackage(pkg: String, timeoutMs: Long): Boolean =
+        waitForPackage(pkg, timeoutMs)
 
     // ------------------------------------------------- flow recorder overlay
 
@@ -286,7 +286,7 @@ class ReelAccessibilityService : AccessibilityService() {
      * numbered marker the user drags to a position; "Save" stores the steps;
      * "Cancel" aborts. The rest of the screen stays fully touchable.
      */
-    fun startFlowRecording(onDone: (Boolean) -> Unit) {
+    fun startFlowRecording(target: String, onDone: (Boolean) -> Unit) {
         val main = android.os.Handler(android.os.Looper.getMainLooper())
         main.post {
             var finished = false
@@ -418,14 +418,17 @@ class ReelAccessibilityService : AccessibilityService() {
                                     .coerceIn(0f, 0.995f)
                             )
                         }
-                        val json = org.json.JSONArray().apply {
-                            steps.forEach { s -> put(org.json.JSONArray(s)) }
-                        }.toString()
                         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             val repo = com.reelpilot.app.data.SettingsRepo.get(applicationContext)
-                            repo.setManualSteps(json)
-                            repo.setManualFlow(true)
-                            AppLog.log("FLOW", "Saved manual flow with ${steps.size} steps")
+                            repo.setFlow(target, steps)
+                            if (target == INSTAGRAM_PACKAGE) {
+                                // Keep the legacy manual-flow keys in sync
+                                repo.setManualSteps(org.json.JSONArray().apply {
+                                    steps.forEach { s -> put(org.json.JSONArray(s)) }
+                                }.toString())
+                                repo.setManualFlow(true)
+                            }
+                            AppLog.log("FLOW", "Saved flow for $target with ${steps.size} steps")
                         }
                     }
                     onDone(save && markers.isNotEmpty())
@@ -449,25 +452,26 @@ class ReelAccessibilityService : AccessibilityService() {
     // -------------------------------------------------------------- flow
 
     /**
-     * Instagram has been started via a share intent that already contains the
-     * video. Walk the remaining composer screens and share it as a reel.
+     * Instagram (or a target with a recorded flow) has been started via a
+     * share intent that already contains the video. Walk the remaining
+     * composer screens and share it as a reel.
      * Returns (success, message).
      */
-    suspend fun postReel(caption: String): Pair<Boolean, String> = withContext(Dispatchers.Default) {
+    suspend fun postReel(caption: String, pkg: String = INSTAGRAM_PACKAGE): Pair<Boolean, String> = withContext(Dispatchers.Default) {
         try {
             val t = com.reelpilot.app.data.SettingsRepo.get(applicationContext).current()
-            step("Waiting for Instagram to open…")
-            if (!waitForPackage(INSTAGRAM_PACKAGE, t.igOpenWaitSec * 1000L)) {
-                return@withContext Pair(false, "Instagram did not open. Is it installed and updated?")
+            step("Waiting for the target app ($pkg) to open…")
+            if (!waitForPackage(pkg, t.igOpenWaitSec * 1000L)) {
+                return@withContext Pair(false, "The app did not open. Is it installed and updated?")
             }
             delay(2000)
 
             // Manual flow: replay the user's recorded tap steps instead of
             // the built-in node matching. The app always handles the warm-up
             // and the share intent itself; the steps start from here.
-            val steps = parseManualSteps(t.manualSteps)
+            val steps = recordedFlowFor(pkg, t)
             var shareResult = "still"
-            if (t.manualFlow && steps.isNotEmpty()) {
+            if (steps.isNotEmpty()) {
                 step("Manual flow: replaying ${steps.size} recorded steps")
                 delay(5000)  // let the reels upload section finish loading
                 val dm = resources.displayMetrics
@@ -558,14 +562,14 @@ class ReelAccessibilityService : AccessibilityService() {
                 }
             }
             AppLog.log("IG", "postReel finished, shareResult=$shareResult")
-            // Leave Instagram's UI immediately…
+            // Leave the app's UI immediately…
             home()
             // …but do NOT kill the process yet: the upload keeps running in
-            // Instagram's background after the composer closes. Killing it
+            // the app's background after the composer closes. Killing it
             // now would abort the upload (the v1.5.2 regression).
-            step("Waiting for Instagram to finish uploading…")
+            step("Waiting for the upload to finish…")
             delay(t.uploadGraceSec * 1000L)
-            killInstagram()
+            killApp(pkg)
             return@withContext when (shareResult) {
                 "confirmed", "gone" -> Pair(true, "Posted successfully")
                 else -> Pair(false, "Share button did not complete — check the Logs tab and retry from the Queue")
@@ -575,6 +579,54 @@ class ReelAccessibilityService : AccessibilityService() {
             AppLog.log("IG", "postReel error: ${e.message}")
             Pair(false, "Automation error: ${e.message?.take(200)}")
         }
+    }
+
+    /**
+     * Posts to a non-Instagram target app by replaying the user-recorded
+     * tap flow for that app. The share intent must already have been fired.
+     */
+    suspend fun postFlow(caption: String, pkg: String): Pair<Boolean, String> = withContext(Dispatchers.Default) {
+        try {
+            val t = com.reelpilot.app.data.SettingsRepo.get(applicationContext).current()
+            val steps = recordedFlowFor(pkg, t)
+            if (steps.isEmpty()) {
+                return@withContext Pair(false, "No recorded flow for this app — record one in Settings → Post to apps")
+            }
+            step("Waiting for the target app ($pkg) to open…")
+            if (!waitForPackage(pkg, t.igOpenWaitSec * 1000L)) {
+                return@withContext Pair(false, "The app did not open. Is it installed and updated?")
+            }
+            step("Replaying recorded flow: ${steps.size} steps")
+            delay(5000)  // let the app's composer finish loading
+            val dm = resources.displayMetrics
+            for ((i, s) in steps.withIndex()) {
+                tapAt(s[0] * dm.widthPixels, s[1] * dm.heightPixels)
+                step("Flow step ${i + 1}/${steps.size}")
+                delay(t.manualStepDelaySec * 1000L)
+            }
+            val shareResult = waitShareResult(90_000)
+            AppLog.log("IG", "postFlow($pkg) finished, shareResult=$shareResult")
+            home()
+            step("Waiting for the upload to finish…")
+            delay(t.uploadGraceSec * 1000L)
+            killApp(pkg)
+            return@withContext when (shareResult) {
+                "confirmed", "gone" -> Pair(true, "Posted successfully")
+                else -> Pair(false, "Recorded flow did not complete the upload — re-record it if the app changed")
+            }
+        } catch (e: Exception) {
+            home()
+            AppLog.log("IG", "postFlow($pkg) error: ${e.message}")
+            Pair(false, "Automation error: ${e.message?.take(200)}")
+        }
+    }
+
+    /** Recorded steps for a target: explicit flow first, legacy IG manual flow second. */
+    private fun recordedFlowFor(pkg: String, t: com.reelpilot.app.data.AppSettings): List<List<Float>> {
+        val flows = com.reelpilot.app.data.SettingsRepo.parseFlows(t.flows)
+        if (flows.containsKey(pkg)) return flows[pkg]!!
+        if (pkg == INSTAGRAM_PACKAGE && t.manualFlow) return parseManualSteps(t.manualSteps)
+        return emptyList()
     }
 
     private fun parseManualSteps(json: String): List<List<Float>> = try {

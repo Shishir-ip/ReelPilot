@@ -1,16 +1,25 @@
 package com.reelpilot.app.ui
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -173,98 +182,185 @@ fun SettingsScreen() {
             Switch(checked = anyone, onCheckedChange = { anyone = it })
         }
 
-        // ---- Manual flow (recorded tap steps)
+        // ---- Post to apps (multi-target) + flows
         Card {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Manual flow", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            if (settings.manualSteps.isBlank()) "No flow recorded yet — default automation is active"
-                            else "Flow recorded" + if (settings.manualFlow) " • ACTIVE" else " • OFF (default automation active)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(
-                        checked = settings.manualFlow && settings.manualSteps.isNotBlank(),
-                        onCheckedChange = { on ->
-                            scope.launch { SettingsRepo.get(context).setManualFlow(on) }
-                        },
-                        enabled = settings.manualSteps.isNotBlank()
-                    )
-                }
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Post to apps", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Record your own tap sequence (auto-clicker style) for when Instagram redesigns their app. The app always handles opening Instagram and sharing the video itself — your recorded steps run right after the reels section opens.",
+                    "The same video is posted to every selected app, one after another. Instagram has built-in automation; other apps need a recorded tap flow (auto-clicker style).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                var flowLink by remember { mutableStateOf("") }
-                OutlinedTextField(
-                    value = flowLink,
-                    onValueChange = { flowLink = it },
-                    label = { Text("Video link (optional setup material)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                val selected = SettingsRepo.parseTargets(settings.targets).toMutableSet()
+                val flows = SettingsRepo.parseFlows(settings.flows)
+                val known = listOf(
+                    "com.instagram.android" to "Instagram",
+                    "com.google.android.youtube" to "YouTube",
+                    "com.facebook.katana" to "Facebook",
+                    "com.zhiliaoapp.musically" to "TikTok",
+                    "com.snapchat.android" to "Snapchat"
                 )
+                fun rebuildCsv(): String {
+                    val customs = selected.filter { pkg -> known.none { it.first == pkg } }
+                    return (known.map { it.first }.filter { it in selected } + customs)
+                        .joinToString(",").ifBlank { "com.instagram.android" }
+                }
+                fun isInstalled(pkg: String): Boolean = try {
+                    context.packageManager.getLaunchIntentForPackage(pkg) != null
+                } catch (e: Exception) {
+                    false
+                }
+
+                known.forEach { (pkg, label) ->
+                    val installed = isInstalled(pkg)
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Checkbox(
+                            checked = pkg in selected,
+                            onCheckedChange = { on ->
+                                if (on) selected.add(pkg) else if (selected.size > 1) selected.remove(pkg)
+                                scope.launch { SettingsRepo.get(context).setTargets(rebuildCsv()) }
+                            },
+                            enabled = installed
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(label + if (installed) "" else " (not installed)", style = MaterialTheme.typography.bodyLarge)
+                            val hasFlow = flows.containsKey(pkg) ||
+                                (pkg == "com.instagram.android" && settings.manualFlow && settings.manualSteps.isNotBlank())
+                            Text(
+                                when {
+                                    pkg == "com.instagram.android" && !hasFlow -> "Built-in automation ✓"
+                                    hasFlow -> "Recorded flow (${flows[pkg]?.size ?: settings.manualSteps.count { it == '[' } - 1} steps)"
+                                    else -> "Record a flow to enable posting"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (hasFlow || pkg == "com.instagram.android") MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+
+                // Any other installed app
+                var showAppDialog by remember { mutableStateOf(false) }
+                OutlinedButton(onClick = { showAppDialog = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("➕  Add any other app from the app list")
+                }
+                if (showAppDialog) {
+                    val pm = context.packageManager
+                    val apps = remember {
+                        pm.queryIntentActivities(
+                            android.content.Intent(android.content.Intent.ACTION_MAIN)
+                                .addCategory(android.content.Intent.CATEGORY_LAUNCHER), 0
+                        ).map { it.activityInfo.packageName to it.loadLabel(pm).toString() }
+                            .filter { (pkg, _) -> pkg != context.packageName && known.none { it.first == pkg } }
+                            .distinctBy { it.first }
+                            .sortedBy { it.second.lowercase() }
+                    }
+                    AlertDialog(
+                        onDismissRequest = { showAppDialog = false },
+                        title = { Text("Pick an app") },
+                        text = {
+                            LazyColumn(Modifier.height(360.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                items(apps) { (pkg, label) ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                if (pkg in selected) selected.remove(pkg) else selected.add(pkg)
+                                                scope.launch { SettingsRepo.get(context).setTargets(rebuildCsv()) }
+                                                showAppDialog = false
+                                            }
+                                            .padding(8.dp)
+                                    ) {
+                                        Text(label, style = MaterialTheme.typography.bodyLarge)
+                                        Spacer(Modifier.weight(1f))
+                                        if (pkg in selected) Text("✓", color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showAppDialog = false }) { Text("Close") }
+                        }
+                    )
+                }
+                val customSelected = selected.filter { pkg -> known.none { it.first == pkg } }
+                if (customSelected.isNotEmpty()) {
+                    Text(
+                        "Also posting to: " + customSelected.joinToString(", ") {
+                            com.reelpilot.app.worker.PostWorker.appLabel(context, it)
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
+                Text("Flows", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Each selected app (other than Instagram) needs a recorded flow. Pick a short video from the gallery as material, then record: the app opens that app, shares the video, and you position the tap markers.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 var pickedUri by remember { mutableStateOf<String?>(null) }
                 val picker = androidx.activity.compose.rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.GetContent()
                 ) { uri -> if (uri != null) pickedUri = uri.toString() }
 
-                OutlinedButton(
-                    onClick = {
-                        scope.launch {
-                            val s = SettingsRepo.get(context).current()
-                            if (flowLink.isBlank()) { toast("Paste a link first"); return@launch }
-                            val dao = AppDatabase.get(context).queueDao()
-                            val newId = dao.insert(
-                                QueueItem(
-                                    source = "link", url = flowLink.trim(),
-                                    title = "[FLOW] ${flowLink.trim().take(60)}",
-                                    caption = "", chatId = s.lastChatId
+                var recordTarget by remember { mutableStateOf<String?>(null) }
+                Text("Record flow for:", style = MaterialTheme.typography.bodyMedium)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    SettingsRepo.parseTargets(settings.targets).forEach { pkg ->
+                        FilterChip(
+                            selected = recordTarget == pkg,
+                            onClick = { recordTarget = pkg },
+                            label = {
+                                Text(
+                                    com.reelpilot.app.worker.PostWorker.appLabel(context, pkg) +
+                                        if (flows.containsKey(pkg)) " ✓" else "",
+                                    maxLines = 1
                                 )
-                            )
-                            WorkManager.getInstance(context).enqueue(
-                                OneTimeWorkRequestBuilder<com.reelpilot.app.worker.DownloadWorker>()
-                                    .setInputData(workDataOf("itemId" to newId))
-                                    .build()
-                            )
-                            flowLink = ""
-                            toast("Downloading — you'll get a bot message when ready")
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("⬇  Download link video") }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    OutlinedButton(
-                        onClick = { picker.launch("video/*") },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            if (pickedUri == null) "🖼 Gallery" else "🖼 Selected ✓",
-                            maxLines = 1
+                            }
                         )
                     }
-                    Button(
-                        onClick = {
-                            val uri = pickedUri
-                            if (uri == null) { toast("Pick a video from the gallery first"); return@Button }
-                            context.startActivity(
-                                android.content.Intent(context, com.reelpilot.app.PostActivity::class.java)
-                                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    .putExtra(com.reelpilot.app.PostActivity.EXTRA_URI, uri)
-                                    .putExtra(com.reelpilot.app.PostActivity.EXTRA_FLOW_SETUP, true)
-                            )
-                        },
-                        enabled = pickedUri != null,
-                        modifier = Modifier.weight(1f)
-                    ) { Text("🎙 Start recorder", maxLines = 1) }
+                }
+                OutlinedButton(
+                    onClick = { picker.launch("video/*") },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (pickedUri == null) "🖼  Pick material video from gallery" else "🖼  Material video selected ✓", maxLines = 1) }
+
+                Button(
+                    onClick = {
+                        val pkg = recordTarget
+                        val uri = pickedUri
+                        if (pkg == null) { toast("Select which app to record for first"); return@Button }
+                        if (uri == null) { toast("Pick a material video first"); return@Button }
+                        context.startActivity(
+                            android.content.Intent(context, com.reelpilot.app.PostActivity::class.java)
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                .putExtra(com.reelpilot.app.PostActivity.EXTRA_URI, uri)
+                                .putExtra(com.reelpilot.app.PostActivity.EXTRA_FLOW_SETUP, true)
+                                .putExtra(com.reelpilot.app.PostActivity.EXTRA_TARGET, pkg)
+                        )
+                    },
+                    enabled = pickedUri != null && recordTarget != null,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "🎙 Start recorder" + (recordTarget?.let { " for " + com.reelpilot.app.worker.PostWorker.appLabel(context, it) } ?: ""),
+                        maxLines = 1
+                    )
                 }
                 Text(
-                    "In the recorder: ＋ adds a numbered marker — drag each one onto the button Instagram should tap, in order. Long-press a marker to remove it, ✔ Save when done. Markers are positions only — nothing is tapped until a real post runs.",
+                    "In the recorder: ＋ adds a numbered marker — drag each one onto the button the app should tap, in order. Long-press removes a marker, ✔ Save. Markers are positions only — nothing is tapped until a real post runs.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -277,14 +373,6 @@ fun SettingsScreen() {
                     suffix = "s",
                     onChange = { scope.launch { SettingsRepo.get(context).setManualStepDelaySec(it) } }
                 )
-
-                TextButton(onClick = {
-                    scope.launch {
-                        SettingsRepo.get(context).setManualSteps("")
-                        SettingsRepo.get(context).setManualFlow(false)
-                        toast("Flow cleared — default automation active")
-                    }
-                }) { Text("Clear recorded flow") }
             }
         }
 

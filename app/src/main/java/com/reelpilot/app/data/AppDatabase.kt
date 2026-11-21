@@ -36,6 +36,7 @@ data class QueueItem(
     val localUri: String? = null,       // MediaStore content uri once downloaded
     val postAt: Long = 0,               // scheduled upload time (0 = automatic slot)
     val uploadedAt: Long = 0,           // when the reel actually went live (for auto-delete)
+    val doneTargets: String = "",       // target apps this video has already been posted to
     val error: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
@@ -97,7 +98,7 @@ interface QueueDao {
     suspend fun retry(id: Long)
 }
 
-@Database(entities = [QueueItem::class], version = 3, exportSchema = false)
+@Database(entities = [QueueItem::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun queueDao(): QueueDao
 
@@ -117,6 +118,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE queue ADD COLUMN doneTargets TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -124,7 +131,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "reelpilot.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build().also { instance = it }
             }
     }

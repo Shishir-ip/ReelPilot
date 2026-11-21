@@ -35,7 +35,10 @@ data class AppSettings(
     // Battery / storage / housekeeping
     val batteryAlertPct: Int = 20,       // 0 = alerts off
     val autoDeleteDays: Int = 7,         // keep posted videos N days; 0 = never delete
-    val watchFolderUri: String = ""      // SAF tree uri; empty = folder watching off
+    val watchFolderUri: String = "",     // SAF tree uri; empty = folder watching off
+    // Multi-app posting
+    val targets: String = "com.instagram.android",  // CSV of target packages
+    val flows: String = ""               // JSON {"pkg": [[x,y],...]} recorded tap flows
 )
 
 class SettingsRepo(private val context: Context) {
@@ -60,6 +63,8 @@ class SettingsRepo(private val context: Context) {
         val BATTERY_ALERT = intPreferencesKey("battery_alert_pct")
         val AUTO_DELETE_DAYS = intPreferencesKey("auto_delete_days")
         val WATCH_FOLDER = stringPreferencesKey("watch_folder_uri")
+        val TARGETS = stringPreferencesKey("targets")
+        val FLOWS = stringPreferencesKey("flows")
     }
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -84,7 +89,9 @@ class SettingsRepo(private val context: Context) {
             manualStepDelaySec = p[Keys.MANUAL_STEP_DELAY] ?: 3,
             batteryAlertPct = p[Keys.BATTERY_ALERT] ?: 20,
             autoDeleteDays = p[Keys.AUTO_DELETE_DAYS] ?: 7,
-            watchFolderUri = p[Keys.WATCH_FOLDER] ?: ""
+            watchFolderUri = p[Keys.WATCH_FOLDER] ?: "",
+            targets = p[Keys.TARGETS] ?: "com.instagram.android",
+            flows = p[Keys.FLOWS] ?: ""
         )
     }
 
@@ -127,8 +134,51 @@ class SettingsRepo(private val context: Context) {
     suspend fun setBatteryAlertPct(v: Int) = context.dataStore.edit { it[Keys.BATTERY_ALERT] = v.coerceIn(0, 50) }
     suspend fun setAutoDeleteDays(v: Int) = context.dataStore.edit { it[Keys.AUTO_DELETE_DAYS] = v.coerceIn(0, 30) }
     suspend fun setWatchFolderUri(v: String) = context.dataStore.edit { it[Keys.WATCH_FOLDER] = v }
+    suspend fun setTargets(csv: String) = context.dataStore.edit { it[Keys.TARGETS] = csv }
+    suspend fun setFlows(json: String) = context.dataStore.edit { it[Keys.FLOWS] = json }
+
+    /** Save (or overwrite) the recorded flow for one target app. */
+    suspend fun setFlow(pkg: String, steps: List<List<Float>>) {
+        val map = parseFlows(current().flows).toMutableMap()
+        map[pkg] = steps
+        setFlows(org.json.JSONObject(map.mapValues { entry ->
+            org.json.JSONArray().apply { entry.value.forEach { s -> put(org.json.JSONArray(s)) } }
+        }.toString()))
+    }
+
+    suspend fun clearFlow(pkg: String) {
+        val map = parseFlows(current().flows).toMutableMap()
+        map.remove(pkg)
+        setFlows(org.json.JSONObject(map.mapValues { entry ->
+            org.json.JSONArray().apply { entry.value.forEach { s -> put(org.json.JSONArray(s)) } }
+        }.toString()))
+    }
 
     companion object {
+        const val INSTAGRAM = "com.instagram.android"
+
+        fun parseTargets(csv: String): List<String> =
+            csv.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                .ifEmpty { listOf(INSTAGRAM) }.distinct()
+
+        /** {"pkg": [[x,y],...]} -> Map */
+        fun parseFlows(json: String): Map<String, List<List<Float>>> = try {
+            val o = org.json.JSONObject(json)
+            val out = mutableMapOf<String, List<List<Float>>>()
+            val keys = o.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val a = o.getJSONArray(k)
+                out[k] = (0 until a.length()).map { i ->
+                    val s = a.getJSONArray(i)
+                    listOf(s.getDouble(0).toFloat(), s.getDouble(1).toFloat())
+                }
+            }
+            out
+        } catch (e: Exception) {
+            emptyMap()
+        }
+
         @Volatile
         private var instance: SettingsRepo? = null
 

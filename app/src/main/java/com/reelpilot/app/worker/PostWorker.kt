@@ -102,59 +102,101 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     AppLog.log("POST", "Skipped — accessibility service not enabled yet")
                     return
                 }
-                if (!isInstagramInstalled(ctx)) {
-                    dao.update(item.copy(status = Status.FAILED, error = "Instagram app not installed"))
-                    TelegramClient(settings.botToken).sendMessage(
-                        item.chatId,
-                        "❌ Instagram is not installed on this phone.\nInstall Instagram, log in once, then tap ↻ Retry on this item in the app's Queue tab."
-                    )
+
+                // Multi-target: post this video to every selected app, one
+                // after another. Progress is stored on the item so a retry
+                // resumes with the remaining apps.
+                val targets = SettingsRepo.parseTargets(settings.targets)
+                val done = item.doneTargets.split(',').filter { it.isNotBlank() }.toMutableList()
+                val pending = targets.filter { it !in done }
+                if (pending.isEmpty()) {
+                    // Everything already posted (e.g. targets changed mid-way).
+                    dao.update(item.copy(status = Status.POSTED, uploadedAt = System.currentTimeMillis()))
                     return
                 }
 
-                dao.update(item.copy(status = Status.POSTING))
-                AppLog.log("POST", "Posting: ${item.title}")
+                val client = TelegramClient(settings.botToken)
+                for (pkg in pending) {
+                    val label = appLabel(ctx, pkg)
+                    if (!isAppInstalled(ctx, pkg)) {
+                        dao.update(item.copy(status = Status.FAILED, error = "App $label not installed"))
+                        client.sendMessage(
+                            item.chatId,
+                            "❌ $label is not installed on this phone.\nInstall it (and log in once), then tap ↻ Retry on this item in the app's Queue tab."
+                        )
+                        return
+                    }
+                    // Non-Instagram targets need a recorded flow.
+                    if (pkg != SettingsRepo.INSTAGRAM &&
+                        !SettingsRepo.parseFlows(settings.flows).containsKey(pkg)
+                    ) {
+                        dao.update(item.copy(status = Status.FAILED, error = "No recorded flow for $label"))
+                        client.sendMessage(
+                            item.chatId,
+                            "⚠️ No recorded flow for $label.\nOpen ReelPilot → Settings → Post to apps → record a flow for it, then retry."
+                        )
+                        return
+                    }
 
-                resultDeferred = CompletableDeferred()
-                val intent = Intent(ctx, PostActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    putExtra(PostActivity.EXTRA_URI, item.localUri)
-                    putExtra(PostActivity.EXTRA_CAPTION, item.caption.ifBlank { settings.caption })
+                    dao.update(item.copy(status = Status.POSTING))
+                    AppLog.log("POST", "Posting to $label: ${item.title}")
+
+                    resultDeferred = CompletableDeferred()
+                    val intent = Intent(ctx, PostActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        putExtra(PostActivity.EXTRA_URI, item.localUri)
+                        putExtra(PostActivity.EXTRA_CAPTION, item.caption.ifBlank { settings.caption })
+                        putExtra(PostActivity.EXTRA_TARGET, pkg)
+                    }
+                    ctx.startActivity(intent)
+
+                    val (ok, msg) = resultDeferred!!.await()
+                    AppLog.log("POST", "Result for $label: ok=$ok, $msg")
+
+                    if (ok) {
+                        done.add(pkg)
+                        dao.update(item.copy(doneTargets = done.joinToString(",")))
+                        client.sendMessage(item.chatId, "🚀 Posted to $label: ${item.title}")
+                    } else {
+                        dao.update(item.copy(status = Status.FAILED, error = "$label: ${msg.take(280)}"))
+                        // Advance the schedule anyway so failures don't retry in a tight loop.
+                        val nextAt = System.currentTimeMillis() + settings.intervalHours * 60 * 60 * 1000L
+                        SettingsRepo.get(ctx).setNextPostAt(nextAt)
+                        client.sendMessage(
+                            item.chatId,
+                            "⚠️ Posting to $label failed: $msg\nAlready posted: ${done.size}/${targets.size} app(s). Retry from the app queue — it resumes with the remaining apps."
+                        )
+                        return
+                    }
                 }
-                ctx.startActivity(intent)
 
-                val (ok, msg) = resultDeferred!!.await()
-                AppLog.log("POST", "Result: ok=$ok, $msg")
-
-                if (ok) {
-                    // Timestamp the upload for the auto-delete housekeeping.
-                    dao.update(item.copy(status = Status.POSTED, uploadedAt = System.currentTimeMillis()))
-                    val nextAt = System.currentTimeMillis() + settings.intervalHours * 60 * 60 * 1000L
-                    SettingsRepo.get(ctx).setNextPostAt(nextAt)
-                    val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nextAt))
-                    TelegramClient(settings.botToken).sendMessage(
-                        item.chatId,
-                        "🚀 Posted: ${item.title}\n⏰ Next reel at $hhmm"
-                    )
-                } else {
-                    dao.update(item.copy(status = Status.FAILED, error = msg.take(300)))
-                    // Advance the schedule anyway so failures don't retry in a tight loop.
-                    val nextAt = System.currentTimeMillis() + settings.intervalHours * 60 * 60 * 1000L
-                    SettingsRepo.get(ctx).setNextPostAt(nextAt)
-                    TelegramClient(settings.botToken)
-                        .sendMessage(item.chatId, "⚠️ Posting failed: $msg\nIt will not be retried automatically — retry it from the app queue.")
-                }
-                // Re-slot the remaining queue after this post / failure.
+                // All targets done — the item is fully posted.
+                dao.update(item.copy(status = Status.POSTED, uploadedAt = System.currentTimeMillis()))
+                val nextAt = System.currentTimeMillis() + settings.intervalHours * 60 * 60 * 1000L
+                SettingsRepo.get(ctx).setNextPostAt(nextAt)
+                val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nextAt))
+                client.sendMessage(
+                    item.chatId,
+                    "✅ Posted to all ${done.size} app(s): ${item.title}\n⏰ Next reel at $hhmm"
+                )
+                // Re-slot the remaining queue after this post.
                 QueueScheduler.reschedule(ctx)
             } finally {
                 busy.set(false)
             }
         }
 
-        private fun isInstagramInstalled(ctx: Context): Boolean = try {
-            ctx.packageManager.getPackageInfo(ReelAccessibilityService.INSTAGRAM_PACKAGE, 0)
+        private fun isAppInstalled(ctx: Context, pkg: String): Boolean = try {
+            ctx.packageManager.getPackageInfo(pkg, 0)
             true
         } catch (e: Exception) {
             false
+        }
+
+        fun appLabel(ctx: Context, pkg: String): String = try {
+            ctx.packageManager.getApplicationInfo(pkg, 0).loadLabel(ctx.packageManager).toString()
+        } catch (e: Exception) {
+            pkg.substringAfterLast('.').ifBlank { pkg }
         }
 
         /** Keep the 15-minute safety net running forever. */

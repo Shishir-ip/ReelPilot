@@ -35,6 +35,16 @@ wake screen → share video to Instagram → accessibility taps Share → done �
 
 That's it. Check progress any time in the app's **Queue** and **Logs** tabs.
 
+## Post to multiple apps 🌍
+
+Instagram is the default target, but you can pick **any installed app** — YouTube, Facebook, TikTok, Snapchat or anything else — in **Settings → Post to apps**. Multiple apps can be selected:
+
+- The same video is posted to each selected app **one after another**, from the same queue slot
+- Per-app progress is tracked, so a retry resumes with the remaining apps instead of starting over
+- **Instagram** has built-in automation out of the box
+- **Other apps** need a one-time recorded flow: Settings → Post to apps → *Record flow for* that app. The recorder (auto-clicker style) opens the app, shares your video, and you drag numbered markers onto the buttons to tap — then it replays your steps on every future post
+- If an app redesigns its UI, just re-record its flow — no app update needed
+
 ## Notes
 
 - Instagram sometimes redesigns its app; if posting starts failing, check the **Logs** tab — automation steps are logged in detail. Updates to match new layouts may be needed occasionally.
