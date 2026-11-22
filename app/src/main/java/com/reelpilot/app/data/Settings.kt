@@ -158,22 +158,6 @@ class SettingsRepo(private val context: Context) {
     suspend fun setCaptionModes(json: String) = context.dataStore.edit { it[Keys.CAPTION_MODES] = json }
     suspend fun setCaptionManual(json: String) = context.dataStore.edit { it[Keys.CAPTION_MANUAL] = json }
 
-    /** Effective prompt: user's custom one, or the sensible Bangla default. */
-    fun effectivePrompt(s: AppSettings): String =
-        s.captionPrompt.ifBlank {
-            "Based on the video transcript, write 1 short, catchy bangla caption in natural, conversational Bangla (not robotic or overly formal) that works across Reels, TikTok, and Shorts. Keep it 2–3 lines max with a strong hook, 1–2 emojis and 3 relevant hashtags."
-        }
-
-    fun effectiveResponseField(s: AppSettings): String =
-        s.captionResponseField.ifBlank { "banglaCaption" }
-
-    /** Caption mode for one app: "generated" (default), "manual" or "none". */
-    fun captionModeFor(s: AppSettings, pkg: String): String =
-        parseStringMap(s.captionModes)[pkg] ?: "generated"
-
-    fun manualCaptionFor(s: AppSettings, pkg: String): String =
-        parseStringMap(s.captionManual)[pkg] ?: ""
-
     /** Save (or overwrite) the recorded flow for one target app. */
     suspend fun setFlow(pkg: String, steps: List<com.reelpilot.app.util.FlowStep>) {
         val map = parseFlows(current().flows).toMutableMap()
@@ -239,6 +223,22 @@ class SettingsRepo(private val context: Context) {
         fun parseTargets(csv: String): List<String> =
             csv.split(',').map { it.trim() }.filter { it.isNotEmpty() }
                 .ifEmpty { listOf(INSTAGRAM) }.distinct()
+
+        /** Effective prompt: user's custom one, or the sensible Bangla default. */
+        fun effectivePrompt(s: AppSettings): String =
+            s.captionPrompt.ifBlank {
+                "Based on the video transcript, write 1 short, catchy bangla caption in natural, conversational Bangla (not robotic or overly formal) that works across Reels, TikTok, and Shorts. Keep it 2–3 lines max with a strong hook, 1–2 emojis and 3 relevant hashtags."
+            }
+
+        fun effectiveResponseField(s: AppSettings): String =
+            s.captionResponseField.ifBlank { "banglaCaption" }
+
+        /** Caption mode for one app: "generated" (default), "manual" or "none". */
+        fun captionModeFor(s: AppSettings, pkg: String): String =
+            parseStringMap(s.captionModes)[pkg] ?: "generated"
+
+        fun manualCaptionFor(s: AppSettings, pkg: String): String =
+            parseStringMap(s.captionManual)[pkg] ?: ""
 
         /** Parse a flat JSON object of strings, e.g. {"pkg":"generated"} */
         fun parseStringMap(json: String): Map<String, String> = try {
