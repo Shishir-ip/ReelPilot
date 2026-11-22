@@ -18,6 +18,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -184,9 +186,9 @@ fun CaptionScreen() {
                                         scope.launch {
                                             val map = modes.toMutableMap()
                                             map[pkg] = m
-                                            SettingsRepo.get(context).setCaptionModes(
-                                                org.json.JSONObject(map).toString()
-                                            )
+                                            val root = org.json.JSONObject()
+                                            map.forEach { (k, v) -> root.put(k, v) }
+                                            SettingsRepo.get(context).setCaptionModes(root.toString())
                                         }
                                     },
                                     label = {
@@ -214,9 +216,9 @@ fun CaptionScreen() {
                                 scope.launch {
                                     val m2 = manual.toMutableMap()
                                     m2[pkg] = text
-                                    SettingsRepo.get(context).setCaptionManual(
-                                        org.json.JSONObject(m2).toString()
-                                    )
+                                    val root = org.json.JSONObject()
+                                    m2.forEach { (k, v) -> root.put(k, v) }
+                                    SettingsRepo.get(context).setCaptionManual(root.toString())
                                     toast("Manual caption saved for $label ✓")
                                 }
                             }) { Text("Save manual caption") }

@@ -160,32 +160,19 @@ class SettingsRepo(private val context: Context) {
 
     /** Effective prompt: user's custom one, or the sensible Bangla default. */
     fun effectivePrompt(): String =
-        captionPrompt.ifBlank {
+        current().captionPrompt.ifBlank {
             "Based on the video transcript, write 1 short, catchy bangla caption in natural, conversational Bangla (not robotic or overly formal) that works across Reels, TikTok, and Shorts. Keep it 2–3 lines max with a strong hook, 1–2 emojis and 3 relevant hashtags."
         }
 
-    fun effectiveResponseField(): String = captionResponseField.ifBlank { "banglaCaption" }
+    fun effectiveResponseField(): String =
+        current().captionResponseField.ifBlank { "banglaCaption" }
 
     /** Caption mode for one app: "generated" (default), "manual" or "none". */
     fun captionModeFor(pkg: String): String =
-        parseStringMap(captionModes)[pkg] ?: "generated"
+        parseStringMap(current().captionModes)[pkg] ?: "generated"
 
     fun manualCaptionFor(pkg: String): String =
-        parseStringMap(captionManual)[pkg] ?: ""
-
-    /** Parse a flat JSON map of strings, e.g. {"pkg":"generated"} */
-    fun parseStringMap(json: String): Map<String, String> = try {
-        val o = org.json.JSONObject(json)
-        val out = mutableMapOf<String, String>()
-        val iter = o.keys()
-        while (iter.hasNext()) {
-            val k = iter.next()
-            out[k] = o.optString(k, "")
-        }
-        out
-    } catch (e: Exception) {
-        emptyMap()
-    }
+        parseStringMap(current().captionManual)[pkg] ?: ""
 
     /** Save (or overwrite) the recorded flow for one target app. */
     suspend fun setFlow(pkg: String, steps: List<com.reelpilot.app.util.FlowStep>) {
@@ -252,6 +239,20 @@ class SettingsRepo(private val context: Context) {
         fun parseTargets(csv: String): List<String> =
             csv.split(',').map { it.trim() }.filter { it.isNotEmpty() }
                 .ifEmpty { listOf(INSTAGRAM) }.distinct()
+
+        /** Parse a flat JSON object of strings, e.g. {"pkg":"generated"} */
+        fun parseStringMap(json: String): Map<String, String> = try {
+            val o = org.json.JSONObject(json)
+            val out = mutableMapOf<String, String>()
+            val iter = o.keys()
+            while (iter.hasNext()) {
+                val k = iter.next()
+                out[k] = o.optString(k, "")
+            }
+            out
+        } catch (e: Exception) {
+            emptyMap()
+        }
 
         // Map of "pkg" -> ordered flow steps. Each step is a legacy (x, y) tap
         // array or a text step object that types the caption when replayed.
