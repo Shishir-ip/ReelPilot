@@ -301,7 +301,8 @@ class ReelAccessibilityService : AccessibilityService() {
                         cornerRadius = radiusDp * density
                     }
 
-                val markers = mutableListOf<Pair<android.widget.TextView, android.view.WindowManager.LayoutParams>>()
+                // (view, layout params, isTextStep) — in the order steps will run.
+                val markers = mutableListOf<Triple<android.widget.TextView, android.view.WindowManager.LayoutParams, Boolean>>()
                 var stepCount = 0
 
                 // The overlay window: touchable, non-focusable. (The window
@@ -352,20 +353,24 @@ class ReelAccessibilityService : AccessibilityService() {
                 fun removeMarker(tv: android.widget.TextView, lp: android.view.WindowManager.LayoutParams) {
                     runCatching { wm.removeView(tv) }
                     markers.removeIf { it.first == tv }
-                    markers.sortedBy { it.second.y }.forEachIndexed { i, (v, _) -> v.text = "${i + 1}" }
+                    var n = 0
+                    markers.forEach { (v, _, isText) ->
+                        if (!isText) { n++; v.text = "$n" }
+                    }
                     stepCount = markers.size
                     updateCounter()
                 }
 
-                fun addMarker() {
+                fun addMarker(isText: Boolean) {
                     stepCount++
                     updateCounter()
+                    val tapNumber = markers.count { !it.third } + 1
                     val tv = android.widget.TextView(this).apply {
-                        text = "$stepCount"
+                        text = if (isText) "✍" else "$tapNumber"
                         setTextColor(android.graphics.Color.WHITE)
                         textSize = 22f
                         gravity = android.view.Gravity.CENTER
-                        background = rounded(0xE66750A4, 30f)
+                        background = rounded(if (isText) 0xE62E7D32 else 0xE66750A4, 30f)
                         setPadding(dp(18), dp(10), dp(18), dp(10))
                         elevation = dp(6).toFloat()
                     }
@@ -401,17 +406,19 @@ class ReelAccessibilityService : AccessibilityService() {
                     }
                     tv.setOnLongClickListener { removeMarker(tv, lp); true }
                     wm.addView(tv, lp)
-                    markers.add(tv to lp)
+                    markers.add(Triple(tv, lp, isText))
                 }
 
                 fun end(save: Boolean) {
                     if (finished) return
                     finished = true
                     runCatching { wm.removeView(panel) }
-                    markers.forEach { (v, _) -> runCatching { wm.removeView(v) } }
+                    markers.forEach { (v, _, _) -> runCatching { wm.removeView(v) } }
                     if (save && markers.isNotEmpty()) {
-                        val steps = markers.sortedBy { it.second.y }.map { (v, lp) ->
-                            listOf(
+                        // Steps play back in the order they were added.
+                        val steps = markers.map { (v, lp, isText) ->
+                            com.reelpilot.app.util.FlowStep(
+                                isText,
                                 ((lp.x + (v.measuredWidth.takeIf { it > 0 } ?: dp(60)) / 2f) / dm.widthPixels)
                                     .coerceIn(0f, 0.995f),
                                 ((lp.y + (v.measuredHeight.takeIf { it > 0 } ?: dp(46)) / 2f) / dm.heightPixels)
@@ -424,7 +431,9 @@ class ReelAccessibilityService : AccessibilityService() {
                             if (target == INSTAGRAM_PACKAGE) {
                                 // Keep the legacy manual-flow keys in sync
                                 repo.setManualSteps(org.json.JSONArray().apply {
-                                    steps.forEach { s -> put(org.json.JSONArray(s)) }
+                                    steps.filter { !it.isText }.forEach { s ->
+                                        put(org.json.JSONArray(listOf(s.x.toDouble(), s.y.toDouble())))
+                                    }
                                 }.toString())
                                 repo.setManualFlow(true)
                             }
@@ -434,14 +443,15 @@ class ReelAccessibilityService : AccessibilityService() {
                     onDone(save && markers.isNotEmpty())
                 }
 
-                panel.addView(styledButton("＋  Add tap step", 0xFF6750A4) { addMarker() })
+                panel.addView(styledButton("＋  Add tap step", 0xFF6750A4) { addMarker(false) })
+                panel.addView(styledButton("✍  Add caption step", 0xFF2E7D32) { addMarker(true) })
                 panel.addView(styledButton("✔  Save flow", 0xFF2E7D32) { end(true) })
                 panel.addView(styledButton("✖  Cancel", 0xFF8B2E2E) { end(false) })
 
                 val pp = overlayParams().apply { x = dp(16); y = dp(60) }
                 wm.addView(panel, pp)
-                addMarker()
-                AppLog.log("FLOW", "Recorder open — drag the numbered marker(s), then Save")
+                addMarker(false)
+                AppLog.log("FLOW", "Recorder open — drag markers in order, then Save")
             } catch (e: Exception) {
                 AppLog.log("FLOW", "Recorder failed: ${e.message}")
                 onDone(false)
@@ -476,8 +486,14 @@ class ReelAccessibilityService : AccessibilityService() {
                 delay(5000)  // let the reels upload section finish loading
                 val dm = resources.displayMetrics
                 for ((i, s) in steps.withIndex()) {
-                    tapAt(s[0] * dm.widthPixels, s[1] * dm.heightPixels)
-                    step("Manual step ${i + 1}/${steps.size}")
+                    tapAt(s.x * dm.widthPixels, s.y * dm.heightPixels)
+                    if (s.isText) {
+                        delay(1200)  // let the field take focus
+                        val typed = typeIntoFocused(caption)
+                        step("Step ${i + 1}/${steps.size}: " + if (typed) "caption typed ✍" else "caption skipped (no editable field)")
+                    } else {
+                        step("Manual step ${i + 1}/${steps.size}")
+                    }
                     delay(t.manualStepDelaySec * 1000L)
                 }
                 shareResult = waitShareResult(90_000)
@@ -600,8 +616,14 @@ class ReelAccessibilityService : AccessibilityService() {
             delay(5000)  // let the app's composer finish loading
             val dm = resources.displayMetrics
             for ((i, s) in steps.withIndex()) {
-                tapAt(s[0] * dm.widthPixels, s[1] * dm.heightPixels)
-                step("Flow step ${i + 1}/${steps.size}")
+                tapAt(s.x * dm.widthPixels, s.y * dm.heightPixels)
+                if (s.isText) {
+                    delay(1200)  // let the field take focus
+                    val typed = typeIntoFocused(caption)
+                    step("Flow step ${i + 1}/${steps.size}: " + if (typed) "caption typed ✍" else "caption skipped (no editable field)")
+                } else {
+                    step("Flow step ${i + 1}/${steps.size}")
+                }
                 delay(t.manualStepDelaySec * 1000L)
             }
             val shareResult = waitShareResult(90_000)
@@ -622,10 +644,13 @@ class ReelAccessibilityService : AccessibilityService() {
     }
 
     /** Recorded steps for a target: explicit flow first, legacy IG manual flow second. */
-    private fun recordedFlowFor(pkg: String, t: com.reelpilot.app.data.AppSettings): List<List<Float>> {
+    private fun recordedFlowFor(pkg: String, t: com.reelpilot.app.data.AppSettings): List<com.reelpilot.app.util.FlowStep> {
         val flows = com.reelpilot.app.data.SettingsRepo.parseFlows(t.flows)
         if (flows.containsKey(pkg)) return flows[pkg]!!
-        if (pkg == INSTAGRAM_PACKAGE && t.manualFlow) return parseManualSteps(t.manualSteps)
+        if (pkg == INSTAGRAM_PACKAGE && t.manualFlow) {
+            return parseManualSteps(t.manualSteps)
+                .map { com.reelpilot.app.util.FlowStep(false, it[0], it[1]) }
+        }
         return emptyList()
     }
 
@@ -637,6 +662,41 @@ class ReelAccessibilityService : AccessibilityService() {
         }
     } catch (e: Exception) {
         emptyList()
+    }
+
+    /**
+     * Types `text` into the currently focused editable field. Tries the
+     * direct set-text action first, then a clipboard paste as fallback.
+     * Polls for up to 8 seconds — apps can take a moment to focus the box.
+     */
+    private suspend fun typeIntoFocused(text: String): Boolean {
+        val deadline = System.currentTimeMillis() + 8000
+        while (System.currentTimeMillis() < deadline) {
+            root()?.let { r ->
+                val all = mutableListOf<AccessibilityNodeInfo>()
+                collectNodes(r, all, 0)
+                val target = all.firstOrNull { it.isEditable && it.isFocused }
+                    ?: all.firstOrNull { it.isEditable && it.text?.toString()?.isEmpty() == true }
+                if (target != null) {
+                    val args = Bundle().apply {
+                        putCharSequence(
+                            AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                            text
+                        )
+                    }
+                    if (target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return true
+                    try {
+                        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("reelpilot_caption", text))
+                        if (target.performAction(AccessibilityNodeInfo.ACTION_PASTE)) return true
+                    } catch (e: Exception) {
+                        AppLog.log("IG", "Paste fallback failed: ${e.message}")
+                    }
+                }
+            }
+            delay(400)
+        }
+        return false
     }
 
     private fun step(msg: String) = AppLog.log("IG", msg)

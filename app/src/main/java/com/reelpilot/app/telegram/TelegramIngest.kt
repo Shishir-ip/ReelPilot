@@ -162,6 +162,10 @@ object TelegramIngest {
                 .setInputData(workDataOf("itemId" to id))
                 .build()
         )
+        // AI caption generation (link videos only, [FLOW] material excluded).
+        if (item.source == "link" && !item.title.startsWith("[FLOW]")) {
+            com.reelpilot.app.worker.CaptionWorker.enqueue(context, id)
+        }
         val active = dao.activeItems()
         val position = active.indexOfFirst { it.id == id } + 1
         var msg = "📥 Queued (#$position): ${item.title}"

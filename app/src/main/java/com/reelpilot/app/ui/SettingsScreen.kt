@@ -54,7 +54,7 @@ import com.reelpilot.app.worker.QueueScheduler
 import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(onOpenLogs: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -551,6 +551,11 @@ fun SettingsScreen() {
             modifier = Modifier.fillMaxWidth(),
             enabled = token.isNotBlank()
         ) { Text("Test bot connection") }
+
+        OutlinedButton(
+            onClick = onOpenLogs,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("🧾 Activity logs") }
 
         SnackbarHost(snackbar)
     }

@@ -76,6 +76,24 @@ class PostWorker(context: Context, params: WorkerParameters) :
         }
 
         /**
+         * Caption for one target app, honoring its per-app mode:
+         *  generated → AI caption, then the sent text, then the global default
+         *  manual    → the text set for this app in the Caption tab
+         *  none      → nothing
+         */
+        fun captionFor(
+            item: com.reelpilot.app.data.QueueItem,
+            pkg: String,
+            s: com.reelpilot.app.data.AppSettings
+        ): String = when (s.captionModeFor(pkg)) {
+            "none" -> ""
+            "manual" -> s.manualCaptionFor(pkg)
+            else -> item.generatedCaption.ifBlank {
+                item.caption.ifBlank { s.caption }
+            }
+        }.trim()
+
+        /**
          * The whole posting check, callable from anywhere (worker, download
          * worker, UI). Guarded by [busy] so only one posting runs at a time.
          */
@@ -145,7 +163,7 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     val intent = Intent(ctx, PostActivity::class.java).apply {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         putExtra(PostActivity.EXTRA_URI, item.localUri)
-                        putExtra(PostActivity.EXTRA_CAPTION, item.caption.ifBlank { settings.caption })
+                        putExtra(PostActivity.EXTRA_CAPTION, captionFor(item, pkg, settings))
                         putExtra(PostActivity.EXTRA_TARGET, pkg)
                     }
                     ctx.startActivity(intent)

@@ -37,6 +37,7 @@ data class QueueItem(
     val postAt: Long = 0,               // scheduled upload time (0 = automatic slot)
     val uploadedAt: Long = 0,           // when the reel actually went live (for auto-delete)
     val doneTargets: String = "",       // target apps this video has already been posted to
+    val generatedCaption: String = "",  // AI caption from SocialKit (link videos)
     val error: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
@@ -98,7 +99,7 @@ interface QueueDao {
     suspend fun retry(id: Long)
 }
 
-@Database(entities = [QueueItem::class], version = 4, exportSchema = false)
+@Database(entities = [QueueItem::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun queueDao(): QueueDao
 
@@ -124,6 +125,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE queue ADD COLUMN generatedCaption TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -131,7 +138,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "reelpilot.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build().also { instance = it }
             }
     }

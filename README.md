@@ -35,6 +35,16 @@ wake screen → share video to Instagram → accessibility taps Share → done �
 
 That's it. Check progress any time in the app's **Queue** and **Logs** tabs.
 
+## AI captions (SocialKit) ✍️
+
+Link videos get an **auto-generated caption** before posting, powered by [SocialKit](https://www.socialkit.dev/):
+
+- Add as many **access keys** as you want in the **Caption tab** (name + monthly credit limit each — e.g. the free 20 credits). The app rotates keys and tracks usage per key (`/api` in Telegram shows what's used/left)
+- The caption is generated with the **original link** right after it's queued — the bot announces it with the credit cost
+- The prompt is fully customizable (defaults to a natural conversational Bangla caption prompt), and the response field name is configurable (default `banglaCaption` — add it as a custom response field in your SocialKit dashboard)
+- **Per-app caption rules** in the Caption tab: 🤖 Generated / ✏️ Manual text / 🚫 None for each posting app
+- **Flows can type captions too**: record a flow for any app and add a **✍ caption step** marker — at replay the app taps that spot and types the video's caption into it (direct set-text with clipboard-paste fallback)
+
 ## Post to multiple apps 🌍
 
 Instagram is the default target, but you can pick **any installed app** — YouTube, Facebook, TikTok, Snapchat or anything else — in **Settings → Post to apps**. Multiple apps can be selected:

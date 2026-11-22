@@ -8,7 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.EditNote
 import androidx.compose.material.icons.rounded.DynamicFeed
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Settings
@@ -65,8 +65,8 @@ private data class Tab(val route: String, val label: String, val icon: ImageVect
 private val TABS = listOf(
     Tab("dashboard", "Home", Icons.Rounded.DynamicFeed),
     Tab("queue", "Queue", Icons.Rounded.PlaylistPlay),
-    Tab("settings", "Settings", Icons.Rounded.Settings),
-    Tab("logs", "Logs", Icons.Rounded.Description)
+    Tab("caption", "Caption", Icons.Rounded.EditNote),
+    Tab("settings", "Settings", Icons.Rounded.Settings)
 )
 
 @Composable
@@ -102,7 +102,8 @@ fun AppScaffold() {
         ) {
             composable("dashboard") { DashboardScreen(onOpenSettings = { nav.navigate("settings") { launchSingleTop = true } }) }
             composable("queue") { QueueScreen() }
-            composable("settings") { SettingsScreen() }
+            composable("caption") { CaptionScreen() }
+            composable("settings") { SettingsScreen(onOpenLogs = { nav.navigate("logs") { launchSingleTop = true } }) }
             composable("logs") { LogsScreen() }
         }
     }

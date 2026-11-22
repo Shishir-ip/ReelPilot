@@ -169,6 +169,20 @@ object TelegramCommands {
                 )
             }
 
+            "/api" -> {
+                val apis = SettingsRepo.parseCaptionApis(settings.captionApis)
+                if (apis.isEmpty()) {
+                    client.sendMessage(chat, "🔑 No caption API keys added yet.\nAdd them in the app's Caption tab.")
+                    return true
+                }
+                val sb = StringBuilder("🔑 Caption API keys:\n\n")
+                apis.forEachIndexed { i, a ->
+                    sb.append("${i + 1}. ${a.name} — ${a.used}/${a.limit} used, ${a.limit - a.used} left\n")
+                }
+                sb.append("\n💡 Keys rotate automatically while credit remains.")
+                client.sendMessage(chat, sb.toString())
+            }
+
             "/done" -> {
                 val posted = dao.byStatus(Status.POSTED)
                 if (posted.isEmpty()) {
@@ -211,6 +225,7 @@ object TelegramCommands {
         /caption text — set default caption
         /battery — phone battery level
         /storage — free storage space
+        /api — caption API keys: credits used and left
         /done — recently posted videos
         /logs — last events
 

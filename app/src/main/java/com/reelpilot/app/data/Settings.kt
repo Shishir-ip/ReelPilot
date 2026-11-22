@@ -38,7 +38,13 @@ data class AppSettings(
     val watchFolderUri: String = "",     // SAF tree uri; empty = folder watching off
     // Multi-app posting
     val targets: String = "com.instagram.android",  // CSV of target packages
-    val flows: String = ""               // JSON {"pkg": [[x,y],...]} recorded tap flows
+    val flows: String = "",              // JSON {"pkg": [steps...]} recorded tap flows
+    // Captions (SocialKit generation + per-app rules)
+    val captionApis: String = "",        // JSON [{"name","key","limit","used"}]
+    val captionPrompt: String = "",      // blank = built-in default prompt
+    val captionResponseField: String = "",  // blank = "banglaCaption"
+    val captionModes: String = "",       // JSON {"pkg": "generated|manual|none"}
+    val captionManual: String = ""       // JSON {"pkg": "manual text"}
 )
 
 class SettingsRepo(private val context: Context) {
@@ -65,6 +71,11 @@ class SettingsRepo(private val context: Context) {
         val WATCH_FOLDER = stringPreferencesKey("watch_folder_uri")
         val TARGETS = stringPreferencesKey("targets")
         val FLOWS = stringPreferencesKey("flows")
+        val CAPTION_APIS = stringPreferencesKey("caption_apis")
+        val CAPTION_PROMPT = stringPreferencesKey("caption_prompt")
+        val CAPTION_RESPONSE_FIELD = stringPreferencesKey("caption_response_field")
+        val CAPTION_MODES = stringPreferencesKey("caption_modes")
+        val CAPTION_MANUAL = stringPreferencesKey("caption_manual")
     }
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -91,7 +102,12 @@ class SettingsRepo(private val context: Context) {
             autoDeleteDays = p[Keys.AUTO_DELETE_DAYS] ?: 7,
             watchFolderUri = p[Keys.WATCH_FOLDER] ?: "",
             targets = p[Keys.TARGETS] ?: "com.instagram.android",
-            flows = p[Keys.FLOWS] ?: ""
+            flows = p[Keys.FLOWS] ?: "",
+            captionApis = p[Keys.CAPTION_APIS] ?: "",
+            captionPrompt = p[Keys.CAPTION_PROMPT] ?: "",
+            captionResponseField = p[Keys.CAPTION_RESPONSE_FIELD] ?: "",
+            captionModes = p[Keys.CAPTION_MODES] ?: "",
+            captionManual = p[Keys.CAPTION_MANUAL] ?: ""
         )
     }
 
@@ -136,9 +152,43 @@ class SettingsRepo(private val context: Context) {
     suspend fun setWatchFolderUri(v: String) = context.dataStore.edit { it[Keys.WATCH_FOLDER] = v }
     suspend fun setTargets(csv: String) = context.dataStore.edit { it[Keys.TARGETS] = csv }
     suspend fun setFlows(json: String) = context.dataStore.edit { it[Keys.FLOWS] = json }
+    suspend fun setCaptionApis(json: String) = context.dataStore.edit { it[Keys.CAPTION_APIS] = json }
+    suspend fun setCaptionPrompt(v: String) = context.dataStore.edit { it[Keys.CAPTION_PROMPT] = v }
+    suspend fun setCaptionResponseField(v: String) = context.dataStore.edit { it[Keys.CAPTION_RESPONSE_FIELD] = v }
+    suspend fun setCaptionModes(json: String) = context.dataStore.edit { it[Keys.CAPTION_MODES] = json }
+    suspend fun setCaptionManual(json: String) = context.dataStore.edit { it[Keys.CAPTION_MANUAL] = json }
+
+    /** Effective prompt: user's custom one, or the sensible Bangla default. */
+    fun effectivePrompt(): String =
+        captionPrompt.ifBlank {
+            "Based on the video transcript, write 1 short, catchy bangla caption in natural, conversational Bangla (not robotic or overly formal) that works across Reels, TikTok, and Shorts. Keep it 2–3 lines max with a strong hook, 1–2 emojis and 3 relevant hashtags."
+        }
+
+    fun effectiveResponseField(): String = captionResponseField.ifBlank { "banglaCaption" }
+
+    /** Caption mode for one app: "generated" (default), "manual" or "none". */
+    fun captionModeFor(pkg: String): String =
+        parseStringMap(captionModes)[pkg] ?: "generated"
+
+    fun manualCaptionFor(pkg: String): String =
+        parseStringMap(captionManual)[pkg] ?: ""
+
+    /** Parse a flat JSON map of strings, e.g. {"pkg":"generated"} */
+    fun parseStringMap(json: String): Map<String, String> = try {
+        val o = org.json.JSONObject(json)
+        val out = mutableMapOf<String, String>()
+        val iter = o.keys()
+        while (iter.hasNext()) {
+            val k = iter.next()
+            out[k] = o.optString(k, "")
+        }
+        out
+    } catch (e: Exception) {
+        emptyMap()
+    }
 
     /** Save (or overwrite) the recorded flow for one target app. */
-    suspend fun setFlow(pkg: String, steps: List<List<Float>>) {
+    suspend fun setFlow(pkg: String, steps: List<com.reelpilot.app.util.FlowStep>) {
         val map = parseFlows(current().flows).toMutableMap()
         map[pkg] = steps
         setFlows(flowsToJson(map))
@@ -150,11 +200,19 @@ class SettingsRepo(private val context: Context) {
         setFlows(flowsToJson(map))
     }
 
-    private fun flowsToJson(map: Map<String, List<List<Float>>>): String {
+    private fun flowsToJson(map: Map<String, List<com.reelpilot.app.util.FlowStep>>): String {
         val root = org.json.JSONObject()
         map.forEach { (pkg, steps) ->
             val arr = org.json.JSONArray()
-            steps.forEach { s -> arr.put(org.json.JSONArray(s)) }
+            steps.forEach { s ->
+                if (s.isText) {
+                    arr.put(org.json.JSONObject().apply {
+                        put("t", 1); put("x", s.x.toDouble()); put("y", s.y.toDouble())
+                    })
+                } else {
+                    arr.put(org.json.JSONArray(listOf(s.x.toDouble(), s.y.toDouble())))
+                }
+            }
             root.put(pkg, arr)
         }
         return root.toString()
@@ -163,21 +221,60 @@ class SettingsRepo(private val context: Context) {
     companion object {
         const val INSTAGRAM = "com.instagram.android"
 
+        data class CaptionApi(val name: String, val key: String, val limit: Int, val used: Int)
+
+        fun parseCaptionApis(json: String): List<CaptionApi> = try {
+            val arr = org.json.JSONArray(json)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                CaptionApi(
+                    o.optString("name", "key"),
+                    o.optString("key", ""),
+                    o.optInt("limit", 20),
+                    o.optInt("used", 0)
+                )
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        fun captionApisToJson(apis: List<CaptionApi>): String {
+            val arr = org.json.JSONArray()
+            apis.forEach { a ->
+                arr.put(org.json.JSONObject().apply {
+                    put("name", a.name); put("key", a.key)
+                    put("limit", a.limit); put("used", a.used)
+                })
+            }
+            return arr.toString()
+        }
+
         fun parseTargets(csv: String): List<String> =
             csv.split(',').map { it.trim() }.filter { it.isNotEmpty() }
                 .ifEmpty { listOf(INSTAGRAM) }.distinct()
 
-        /** {"pkg": [[x,y],...]} -> Map */
-        fun parseFlows(json: String): Map<String, List<List<Float>>> = try {
+        /** {"pkg": [steps...]} -> Map of ordered steps. Each step is either a
+         *  legacy [x,y] tap array or a {"t":1,"x":…,"y":…} text step object. */
+        fun parseFlows(json: String): Map<String, List<com.reelpilot.app.util.FlowStep>> = try {
             val o = org.json.JSONObject(json)
-            val out = mutableMapOf<String, List<List<Float>>>()
+            val out = mutableMapOf<String, List<com.reelpilot.app.util.FlowStep>>()
             val keys = o.keys()
             while (keys.hasNext()) {
                 val k = keys.next()
                 val a = o.getJSONArray(k)
                 out[k] = (0 until a.length()).map { i ->
-                    val s = a.getJSONArray(i)
-                    listOf(s.getDouble(0).toFloat(), s.getDouble(1).toFloat())
+                    val el = a.get(i)
+                    when (el) {
+                        is org.json.JSONObject -> com.reelpilot.app.util.FlowStep(
+                            true,
+                            el.getDouble("x").toFloat(),
+                            el.getDouble("y").toFloat()
+                        )
+                        else -> {
+                            val s = el as org.json.JSONArray
+                            com.reelpilot.app.util.FlowStep(false, s.getDouble(0).toFloat(), s.getDouble(1).toFloat())
+                        }
+                    }
                 }
             }
             out
