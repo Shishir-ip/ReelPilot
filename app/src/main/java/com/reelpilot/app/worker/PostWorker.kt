@@ -85,9 +85,9 @@ class PostWorker(context: Context, params: WorkerParameters) :
             item: com.reelpilot.app.data.QueueItem,
             pkg: String,
             s: com.reelpilot.app.data.AppSettings
-        ): String = when (s.captionModeFor(pkg)) {
+        ): String = when (SettingsRepo.captionModeFor(s, pkg)) {
             "none" -> ""
-            "manual" -> s.manualCaptionFor(pkg)
+            "manual" -> SettingsRepo.manualCaptionFor(s, pkg)
             else -> item.generatedCaption.ifBlank {
                 item.caption.ifBlank { s.caption }
             }

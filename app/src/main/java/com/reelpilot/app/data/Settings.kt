@@ -159,20 +159,20 @@ class SettingsRepo(private val context: Context) {
     suspend fun setCaptionManual(json: String) = context.dataStore.edit { it[Keys.CAPTION_MANUAL] = json }
 
     /** Effective prompt: user's custom one, or the sensible Bangla default. */
-    fun effectivePrompt(): String =
-        current().captionPrompt.ifBlank {
+    fun effectivePrompt(s: AppSettings): String =
+        s.captionPrompt.ifBlank {
             "Based on the video transcript, write 1 short, catchy bangla caption in natural, conversational Bangla (not robotic or overly formal) that works across Reels, TikTok, and Shorts. Keep it 2–3 lines max with a strong hook, 1–2 emojis and 3 relevant hashtags."
         }
 
-    fun effectiveResponseField(): String =
-        current().captionResponseField.ifBlank { "banglaCaption" }
+    fun effectiveResponseField(s: AppSettings): String =
+        s.captionResponseField.ifBlank { "banglaCaption" }
 
     /** Caption mode for one app: "generated" (default), "manual" or "none". */
-    fun captionModeFor(pkg: String): String =
-        parseStringMap(current().captionModes)[pkg] ?: "generated"
+    fun captionModeFor(s: AppSettings, pkg: String): String =
+        parseStringMap(s.captionModes)[pkg] ?: "generated"
 
-    fun manualCaptionFor(pkg: String): String =
-        parseStringMap(current().captionManual)[pkg] ?: ""
+    fun manualCaptionFor(s: AppSettings, pkg: String): String =
+        parseStringMap(s.captionManual)[pkg] ?: ""
 
     /** Save (or overwrite) the recorded flow for one target app. */
     suspend fun setFlow(pkg: String, steps: List<com.reelpilot.app.util.FlowStep>) {

@@ -96,8 +96,8 @@ object CaptionGenerator {
             }
 
             try {
-                val prompt = s.effectivePrompt()
-                val field = s.effectiveResponseField()
+                val prompt = SettingsRepo.effectivePrompt(s)
+                val field = SettingsRepo.effectiveResponseField(s)
                 val url = "https://api.socialkit.dev/$platform/summarize" +
                     "?access_key=" + URLEncoder.encode(api.key, "UTF-8") +
                     "&url=" + URLEncoder.encode(item.url, "UTF-8") +
