@@ -253,8 +253,8 @@ class SettingsRepo(private val context: Context) {
             csv.split(',').map { it.trim() }.filter { it.isNotEmpty() }
                 .ifEmpty { listOf(INSTAGRAM) }.distinct()
 
-        /** {"pkg": [steps...]} -> Map of ordered steps. Each step is either a
-         *  legacy [x,y] tap array or a {"t":1,"x":…,"y":…} text step object. */
+        // Map of "pkg" -> ordered flow steps. Each step is a legacy (x, y) tap
+        // array or a text step object that types the caption when replayed.
         fun parseFlows(json: String): Map<String, List<com.reelpilot.app.util.FlowStep>> = try {
             val o = org.json.JSONObject(json)
             val out = mutableMapOf<String, List<com.reelpilot.app.util.FlowStep>>()
