@@ -77,6 +77,8 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}) {
     ) {
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
 
+        UpdateCard()
+
         OutlinedTextField(
             value = token,
             onValueChange = { token = it },

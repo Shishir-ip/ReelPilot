@@ -197,7 +197,13 @@ fun QueueScreen() {
                                 PostWorker.scheduleOneTime(context)
                             }
                         },
-                        onEditTime = { editItem = item }
+                        onEditTime = { editItem = item },
+                        onGenerate = {
+                            scope.launch {
+                                dao.setCaptionStatus(item.id, "pending")
+                                com.reelpilot.app.worker.CaptionWorker.enqueue(context, item.id)
+                            }
+                        }
                     )
                 }
             }
@@ -255,7 +261,8 @@ private fun QueueCard(
     item: QueueItem,
     onRetry: () -> Unit,
     onDelete: () -> Unit,
-    onEditTime: () -> Unit
+    onEditTime: () -> Unit,
+    onGenerate: () -> Unit
 ) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -348,17 +355,23 @@ private fun QueueCard(
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
 
-            if (item.status == Status.FAILED || item.status == Status.POSTED) {
-                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                    if (item.status == Status.FAILED) {
-                        IconButton(onClick = onRetry) {
-                            Icon(Icons.Rounded.Refresh, contentDescription = "Retry")
-                        }
-                    }
-                    IconButton(onClick = onDelete) {
-                        Icon(Icons.Rounded.Delete, contentDescription = "Delete")
+            // Actions: generate caption (link videos), retry, remove — always available.
+            Row(
+                horizontalArrangement = Arrangement.End,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (item.source == "link") {
+                    TextButton(
+                        onClick = onGenerate,
+                        enabled = item.captionStatus != "pending"
+                    ) {
+                        Text(if (item.generatedCaption.isBlank()) "✍️ Generate" else "✍️ Regen")
                     }
                 }
+                if (item.status == Status.FAILED) {
+                    TextButton(onClick = onRetry) { Text("↻ Retry") }
+                }
+                TextButton(onClick = onDelete) { Text("🗑 Remove") }
             }
         }
     }
