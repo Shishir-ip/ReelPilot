@@ -105,24 +105,30 @@ fun CaptionScreen() {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Generation methods", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Tried in order 1 → 2 → 3. When a method runs out of credit or fails, the next enabled one takes over. Turn on all, any two, or just one.",
+                    "Tried in order 1 → 2 → 3 → 4. When a method runs out of credit or fails, the next enabled one takes over. Turn on all, any combination, or just one.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 MethodSwitch(
-                    title = "1 · CaptAPI — original caption",
-                    subtitle = "Fetches the video's own caption via CaptAPI and cleans it to one line. Costs 1–2 tokens per video.",
-                    checked = methodMap["details"] != "false",
-                    onChange = { setMethod("details", it) }
+                    title = "1 · Scraped caption + Gemini (short & fresh)",
+                    subtitle = "Scrapes the video's own caption for free, then Gemini (${SettingsRepo.GEMINI_MODEL}) rewrites it into a short, proper Bangla caption — no page names, handles or junk tags. Uses your Gemini key pool.",
+                    checked = methodMap["scrapgemini"] != "false",
+                    onChange = { setMethod("scrapgemini", it) }
                 )
                 MethodSwitch(
-                    title = "2 · CaptAPI summary + Gemini AI",
-                    subtitle = "CaptAPI summarizes the video (4 tokens), then Gemini (${SettingsRepo.GEMINI_MODEL}) writes a fresh caption from your prompt.",
+                    title = "2 · Built-in script (same-to-same, free)",
+                    subtitle = "The app's bundled yt-dlp reads the video's own caption/description straight from the link and keeps it as-is (one line). No key, no cost.",
+                    checked = methodMap["builtin"] != "false",
+                    onChange = { setMethod("builtin", it) }
+                )
+                MethodSwitch(
+                    title = "3 · CaptAPI summary + Gemini AI",
+                    subtitle = "CaptAPI summarizes the video (4 tokens), then Gemini writes a fresh caption from your prompt.",
                     checked = methodMap["summary"] != "false",
                     onChange = { setMethod("summary", it) }
                 )
                 MethodSwitch(
-                    title = "3 · SocialKit AI caption",
+                    title = "4 · SocialKit AI caption",
                     subtitle = "The original SocialKit summarizer with your custom prompt and response field.",
                     checked = methodMap["socialkit"] != "false",
                     onChange = { setMethod("socialkit", it) }
@@ -133,10 +139,10 @@ fun CaptionScreen() {
         // ---- CaptAPI key pool
         PoolCard(
             title = "CaptAPI keys",
-            subtitle = "One key works across Facebook, Instagram, TikTok, YouTube and X. Add as many as you like — each with its own token limit. Details cost 1–2 tokens, summarize 4 (YouTube 3). Keys are picked randomly among those with credit left.",
+            subtitle = "Used by method 3 (summarize, 4 tokens per video; YouTube 3). One key works across Facebook, Instagram, TikTok and YouTube. Add as many as you like — each with its own token limit. Keys are picked randomly among those with credit left.",
             unit = "tokens",
             apis = captApis,
-            emptyText = "No CaptAPI keys yet — methods 1 and 2 will be skipped.",
+            emptyText = "No CaptAPI keys yet — method 3 will be skipped.",
             onAdd = { addPool = "captapi" },
             onRemove = { removeKey("captapi", it) }
         )
@@ -144,18 +150,54 @@ fun CaptionScreen() {
         // ---- Gemini key pool
         PoolCard(
             title = "Gemini API keys",
-            subtitle = "Used by method 2 to write the caption from the summary. Add as many keys as you like, each with a request limit. 1 request = 1 caption.",
+            subtitle = "Used by methods 1 and 3 to write the caption. Add as many keys as you like, each with a request limit. 1 request = 1 caption.",
             unit = "requests",
             apis = geminiApis,
-            emptyText = "No Gemini keys yet — method 2 will be skipped.",
+            emptyText = "No Gemini keys yet — methods 1 and 3 will be skipped.",
             onAdd = { addPool = "gemini" },
             onRemove = { removeKey("gemini", it) }
         )
 
+        // ---- Scrap + Gemini prompt (method 1)
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Scrap + Gemini prompt (method 1)", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Tells Gemini how to rewrite the scraped caption into a short, proper Bangla caption.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                var scrapPrompt by remember(settings.scrapGeminiPrompt) {
+                    mutableStateOf(settings.scrapGeminiPrompt.ifBlank { SettingsRepo.DEFAULT_SCRAP_GEMINI_PROMPT })
+                }
+                OutlinedTextField(
+                    value = scrapPrompt,
+                    onValueChange = { scrapPrompt = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        scope.launch {
+                            SettingsRepo.get(context).setScrapGeminiPrompt(scrapPrompt)
+                            toast("Scrap prompt saved ✓")
+                        }
+                    }) { Text("Save prompt") }
+                    TextButton(onClick = {
+                        scope.launch {
+                            SettingsRepo.get(context).setScrapGeminiPrompt("")
+                            scrapPrompt = SettingsRepo.DEFAULT_SCRAP_GEMINI_PROMPT
+                            toast("Prompt reset to default")
+                        }
+                    }) { Text("Reset to default") }
+                }
+            }
+        }
+
         // ---- Gemini prompt
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Gemini prompt (method 2)", style = MaterialTheme.typography.titleMedium)
+                Text("Gemini prompt (method 3)", style = MaterialTheme.typography.titleMedium)
                 var prompt by remember(settings.geminiPrompt) {
                     mutableStateOf(settings.geminiPrompt.ifBlank { SettingsRepo.DEFAULT_GEMINI_PROMPT })
                 }

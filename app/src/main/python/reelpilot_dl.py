@@ -76,3 +76,40 @@ def download(url, out_dir):
             })
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)})
+
+
+def fetch_caption(url):
+    """Fetch the video's own caption/description from the link — no download,
+    no external API. Returns JSON {ok, caption, title}."""
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "socket_timeout": 20,
+        "retries": 1,
+        "skip_download": True,
+    }
+    try:
+        with YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if info is None:
+                return json.dumps({"ok": False, "error": "No video found at that link"})
+            if "entries" in info:
+                entries = [e for e in info["entries"] if e]
+                if not entries:
+                    return json.dumps({"ok": False, "error": "Playlist was empty"})
+                info = entries[0]
+            title = (info.get("title") or "").strip()
+            desc = (info.get("description") or "").strip()
+            # The post text IS the caption on FB/IG/TikTok; on YouTube the
+            # description can be huge — keep a sane opening chunk.
+            caption = desc if desc else title
+            if len(caption) > 500:
+                cut = caption[:500]
+                sp = cut.rfind(" ")
+                caption = cut[:sp] if sp > 300 else cut
+            if not caption:
+                return json.dumps({"ok": False, "error": "Video has no caption or title"})
+            return json.dumps({"ok": True, "caption": caption, "title": title})
+    except Exception as e:
+        return json.dumps({"ok": False, "error": str(e)})

@@ -27,15 +27,17 @@ import java.util.concurrent.TimeUnit
  * download using the ORIGINAL link; the result is stored on the queue item
  * and typed into every app whose caption mode is "generated".
  *
- * Three methods, tried in fallback order (each can be toggled in the Caption
+ * Four methods, tried in fallback order (each can be toggled in the Caption
  * tab). When one runs out of credit or fails, the next enabled one takes over:
  *
- *  1. "details"  — CaptAPI /v1/{platform}/details: uses the video's OWN
- *     caption text (cleaned to one line). Cost: per-endpoint credits.
- *  2. "summary"  — CaptAPI /v1/{platform}/summarize (4 credits on FB/IG/TikTok,
- *     3 on YouTube) → the summary is sent to Gemini (gemini-3.5-flash-lite)
- *     with the user's prompt to write a fresh Bangla caption.
- *  3. "socialkit" — the original SocialKit summarize integration.
+ *  1. "scrapgemini" — free yt-dlp scrape of the video's own caption, then
+ *     Gemini (gemini-3.5-flash-lite) REWRITES it into a short, fresh Bangla
+ *     caption (drops page names, handles, junk hashtags). Uses the Gemini pool.
+ *  2. "builtin"  — free, keyless: the bundled yt-dlp reads the video's own
+ *     caption/description straight from the link, verbatim (one line).
+ *  3. "summary"  — CaptAPI /v1/{platform}/summarize (4 credits on FB/IG/TikTok,
+ *     3 on YouTube) → the summary is sent to Gemini with the user's prompt.
+ *  4. "socialkit" — the original SocialKit summarize integration.
  *
  * Every method has its own key pool (add unlimited keys, each with a limit).
  * Keys are picked RANDOMLY among those with credit left; usage is tracked per
@@ -67,16 +69,18 @@ object CaptionGenerator {
             .trim()
 
     fun methodLabel(method: String): String = when (method) {
-        "details" -> "CaptAPI original caption"
+        "scrapgemini" -> "Scraped caption + Gemini"
+        "builtin" -> "Built-in script (yt-dlp)"
         "summary" -> "CaptAPI summary + Gemini"
         else -> "SocialKit AI"
     }
 
-    /** True when at least one enabled method has a key with credit left. */
+    /** True when at least one enabled method can run (builtin needs no keys). */
     fun anyMethodHasCredit(s: AppSettings): Boolean =
         SettingsRepo.enabledMethods(s).any { m ->
             when (m) {
-                "details" -> CaptionApi.parseList(s.captApis)
+                "builtin" -> true
+                "scrapgemini" -> CaptionApi.parseList(s.geminiApis)
                     .any { it.key.isNotBlank() && it.remaining > 0 }
                 "summary" -> CaptionApi.parseList(s.captApis)
                     .any { it.key.isNotBlank() && it.remaining >= 4 } &&
@@ -129,16 +133,6 @@ object CaptionGenerator {
 
     // ------------------------------------------------- CaptAPI endpoint map
 
-    private fun detailsPath(platform: String, url: String): String? = when (platform) {
-        "facebook" -> "facebook/details"
-        "instagram" -> "instagram/details"
-        "tiktok" -> "tiktok/video-details"
-        "youtube" -> if (url.contains("/shorts/", true)) "youtube/shorts/video-details"
-        else "youtube/video-details"
-        "twitter" -> "twitter/tweet-details"
-        else -> null
-    }
-
     private fun summarizePath(platform: String, url: String): String? = when (platform) {
         "facebook", "instagram", "tiktok" -> "$platform/summarize"
         "youtube" -> if (url.contains("/shorts/", true)) "youtube/shorts/summarize"
@@ -146,8 +140,7 @@ object CaptionGenerator {
         else -> null  // Twitter/X has no summarizer endpoint
     }
 
-    /** Fallback costs when the X-Captapi-Credits header is missing. */
-    private fun detailsCost(platform: String): Int = if (platform == "facebook") 2 else 1
+    /** Fallback cost when the X-Captapi-Credits header is missing. */
     private fun summarizeCost(platform: String): Int = if (platform == "youtube") 3 else 4
 
     // -------------------------------------------------------------- pipeline
@@ -166,7 +159,7 @@ object CaptionGenerator {
         val s = SettingsRepo.get(ctx).current()
         val methods = SettingsRepo.enabledMethods(s)
         val platform = platformFor(item.url)
-        if (methods.isEmpty() || platform == null) {
+        if (methods.isEmpty() || (platform == null && "builtin" !in methods)) {
             dao.setCaptionStatus(itemId, "skipped")
             AppLog.log(
                 "CAP",
@@ -181,7 +174,8 @@ object CaptionGenerator {
         for (method in methods) {
             val caption = try {
                 when (method) {
-                    "details" -> tryDetails(ctx, item, platform)
+                    "scrapgemini" -> tryScrapGemini(ctx, item)
+                    "builtin" -> tryBuiltin(ctx, item)
                     "summary" -> trySummary(ctx, item, platform)
                     else -> trySocialKit(ctx, item, platform)
                 }
@@ -214,76 +208,41 @@ object CaptionGenerator {
         AppLog.log("CAP", "All methods failed — using default caption")
     }
 
-    // ------------------------------------------- method 1: CaptAPI details
+    // ------------------------------------- method 0: built-in yt-dlp script
 
-    private suspend fun tryDetails(ctx: Context, item: QueueItem, platform: String): String? {
-        val path = detailsPath(platform, item.url) ?: return null
-        var apis = CaptionApi.parseList(SettingsRepo.get(ctx).current().captApis)
-        if (apis.none { it.key.isNotBlank() && it.remaining > 0 }) {
-            AppLog.log("CAP", "No CaptAPI keys with tokens left for details")
+    /** Free, keyless: read the video's own caption/description from the link. */
+    private suspend fun tryBuiltin(ctx: Context, item: QueueItem): String? {
+        AppLog.log("CAP", "Built-in caption fetch (yt-dlp) for ${item.url.take(60)}…")
+        val raw = YtDlpBridge.fetchCaption(ctx, item.url)
+        if (raw == null) {
+            AppLog.log("CAP", "Built-in fetch got no caption (login wall or unsupported link)")
             return null
         }
-        val tried = mutableSetOf<CaptionApi>()
-        while (true) {
-            val api = pickRandom(apis, tried, 1) ?: return null
-            tried.add(api)
-            try {
-                AppLog.log("CAP", "CaptAPI details via '${api.name}' ($platform)…")
-                val req = okhttp3.Request.Builder()
-                    .url("https://api.captapi.com/v1/$path?url=" + URLEncoder.encode(item.url, "UTF-8"))
-                    .header("Authorization", "Bearer ${api.key}")
-                    .get()
-                    .build()
-                http.newCall(req).execute().use { resp ->
-                    val body = resp.body?.string() ?: ""
-                    when {
-                        resp.code == 401 || resp.code == 403 -> {
-                            AppLog.log("CAP", "CaptAPI key '${api.name}' rejected (${resp.code})")
-                            markExhausted(ctx, Pool.CAPTAPI, api)
-                            return@use
-                        }
-                        resp.code == 402 -> {
-                            AppLog.log("CAP", "CaptAPI key '${api.name}' out of credits (402)")
-                            markExhausted(ctx, Pool.CAPTAPI, api)
-                            return@use
-                        }
-                        resp.code == 400 || resp.code == 404 || resp.code == 422 -> {
-                            AppLog.log("CAP", "CaptAPI details can't serve this link (HTTP ${resp.code})")
-                            return null
-                        }
-                        !resp.isSuccessful -> throw RuntimeException("HTTP ${resp.code}: ${body.take(100)}")
-                    }
-                    val json = org.json.JSONObject(body)
-                    if (!json.optBoolean("success", false)) {
-                        val err = json.optJSONObject("error")?.optString("message")
-                            ?: "API returned success=false"
-                        if (err.contains("credit", true) || err.contains("limit", true) ||
-                            err.contains("exhaust", true)
-                        ) {
-                            markExhausted(ctx, Pool.CAPTAPI, api)
-                            return@use
-                        }
-                        throw RuntimeException(err)
-                    }
-                    val data = json.getJSONObject("data")
-                    val raw = data.optString("caption", "").trim()
-                        .ifBlank { data.optString("title", "").trim() }
-                    if (raw.isBlank()) throw RuntimeException("Details response had no caption")
-                    val cost = resp.header("X-Captapi-Credits")?.toIntOrNull() ?: detailsCost(platform)
-                    addUsed(ctx, Pool.CAPTAPI, api, cost)
-                    AppLog.log("CAP", "CaptAPI details OK ($cost tokens, key '${api.name}')")
-                    return oneLine(raw)
-                }
-            } catch (e: Exception) {
-                AppLog.log("CAP", "CaptAPI details key '${api.name}' failed: ${e.message?.take(120)}")
-            }
-            apis = CaptionApi.parseList(SettingsRepo.get(ctx).current().captApis)
+        AppLog.log("CAP", "Built-in caption OK (free, no API)")
+        return oneLine(raw)
+    }
+
+    // ------------------------------ method 1: scraped caption + Gemini rewrite
+
+    /**
+     * Free yt-dlp scrape of the video's own caption, then Gemini rewrites it
+     * into a short, fresh Bangla caption (no page names / junk hashtags).
+     */
+    private suspend fun tryScrapGemini(ctx: Context, item: QueueItem): String? {
+        AppLog.log("CAP", "Scraping caption for Gemini rewrite: ${item.url.take(60)}…")
+        val raw = YtDlpBridge.fetchCaption(ctx, item.url)
+        if (raw == null) {
+            AppLog.log("CAP", "Scrape got no caption (login wall or unsupported link)")
+            return null
         }
+        val s = SettingsRepo.get(ctx).current()
+        return geminiCaption(ctx, raw, SettingsRepo.effectiveScrapGeminiPrompt(s), "Scraped caption")
     }
 
     // ------------------------------------ method 2: CaptAPI summary + Gemini
 
-    private suspend fun trySummary(ctx: Context, item: QueueItem, platform: String): String? {
+    private suspend fun trySummary(ctx: Context, item: QueueItem, platform: String?): String? {
+        if (platform == null) return null
         val path = summarizePath(platform, item.url)
         if (path == null) {
             AppLog.log("CAP", "No CaptAPI summarizer for $platform")
@@ -356,13 +315,12 @@ object CaptionGenerator {
             }
             apis = CaptionApi.parseList(SettingsRepo.get(ctx).current().captApis)
         }
-        return geminiCaption(ctx, summary!!)
+        return geminiCaption(ctx, summary!!, SettingsRepo.effectiveGeminiPrompt(SettingsRepo.get(ctx).current()), "Video summary")
     }
 
-    /** Sends the summary to Gemini and returns the generated caption. */
-    private suspend fun geminiCaption(ctx: Context, summary: String): String? {
+    /** Sends source text (summary or scraped caption) to Gemini with the given prompt. */
+    private suspend fun geminiCaption(ctx: Context, sourceText: String, prompt: String, sourceLabel: String): String? {
         val s = SettingsRepo.get(ctx).current()
-        val prompt = SettingsRepo.effectiveGeminiPrompt(s)
         var apis = CaptionApi.parseList(s.geminiApis)
         if (apis.none { it.key.isNotBlank() && it.remaining > 0 }) {
             AppLog.log("CAP", "No Gemini API keys with credit left")
@@ -376,7 +334,7 @@ object CaptionGenerator {
                 val payload = org.json.JSONObject().apply {
                     put("contents", org.json.JSONArray().put(org.json.JSONObject().apply {
                         put("parts", org.json.JSONArray().put(org.json.JSONObject().apply {
-                            put("text", "$prompt\n\nVideo summary:\n$summary")
+                            put("text", "$prompt\n\n$sourceLabel:\n$sourceText")
                         }))
                     }))
                 }
@@ -395,6 +353,11 @@ object CaptionGenerator {
                             return@use
                         }
                         resp.code == 400 -> {
+                            if (body.contains("API_KEY_INVALID", true) || body.contains("API key not valid", true)) {
+                                AppLog.log("CAP", "Gemini key '${api.name}' invalid (400) — trying next key")
+                                markExhausted(ctx, Pool.GEMINI, api)
+                                return@use
+                            }
                             AppLog.log("CAP", "Gemini rejected the request (400): ${body.take(140)}")
                             return null
                         }
@@ -422,8 +385,8 @@ object CaptionGenerator {
 
     // ------------------------------------------ method 3: SocialKit (legacy)
 
-    private suspend fun trySocialKit(ctx: Context, item: QueueItem, platform: String): String? {
-        if (platform == "twitter") return null  // SocialKit has no Twitter endpoint
+    private suspend fun trySocialKit(ctx: Context, item: QueueItem, platform: String?): String? {
+        if (platform == null || platform == "twitter") return null  // SocialKit has no Twitter endpoint
         val s = SettingsRepo.get(ctx).current()
         var apis = CaptionApi.parseList(s.captionApis)
         if (apis.none { it.key.isNotBlank() && it.remaining > 0 }) {

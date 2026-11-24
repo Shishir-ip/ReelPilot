@@ -44,6 +44,26 @@ object YtDlpBridge {
         return Triple(uri, title, size)
     }
 
+    /**
+     * Fetches the video's own caption/description straight from the link via
+     * yt-dlp metadata extraction — free, no external API, no download.
+     * Returns null when the platform blocks anonymous access (login wall).
+     */
+    fun fetchCaption(context: Context, url: String): String? {
+        if (!com.chaquo.python.Python.isStarted()) {
+            com.chaquo.python.Python.start(AndroidPlatform(context))
+        }
+        val py = com.chaquo.python.Python.getInstance()
+        val module: PyObject = py.getModule("reelpilot_dl")
+        val resultJson = module.callAttr("fetch_caption", url).toString()
+        val result = JSONObject(resultJson)
+        if (!result.optBoolean("ok", false)) {
+            AppLog.log("YT", "Built-in caption fetch failed: ${result.optString("error").take(140)}")
+            return null
+        }
+        return result.optString("caption", "").trim().ifBlank { null }
+    }
+
     private fun sanitize(name: String): String =
         name.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(80).ifBlank { "reelpilot_video" }
 
