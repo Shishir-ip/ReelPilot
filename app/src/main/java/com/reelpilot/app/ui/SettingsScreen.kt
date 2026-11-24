@@ -481,6 +481,44 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}) {
                     onChange = { scope.launch { SettingsRepo.get(context).setBatteryAlertPct(it) } }
                 )
 
+                // Exact-time wake-ups (Android 12+ special permission)
+                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    val am = context.getSystemService(android.app.AlarmManager::class.java)
+                    var exactOk by remember { mutableStateOf(am.canScheduleExactAlarms()) }
+                    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+                    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+                        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+                            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                                exactOk = am.canScheduleExactAlarms()
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(obs)
+                        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Exact-time posting", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                if (exactOk) "✅ Alarms & reminders allowed — the phone wakes at the exact upload time."
+                                else "⚠️ Allow 'Alarms & reminders' so uploads fire on time even in battery saver / Doze.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (!exactOk) {
+                            OutlinedButton(onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                                            .setData(android.net.Uri.parse("package:${context.packageName}"))
+                                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                            }) { Text("Allow") }
+                        }
+                    }
+                }
+
                 // Auto-delete
                 TimingSlider(
                     label = "Auto-delete posted videos after" + if (settings.autoDeleteDays == 0) " (off)" else "",

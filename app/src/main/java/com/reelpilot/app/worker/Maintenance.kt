@@ -91,12 +91,12 @@ object Maintenance {
                     } else {
                         File(uri.path ?: "").delete()
                     }
-                    dao.update(item.copy(localUri = null))
+                    dao.clearLocalUri(item.id)
                     AppLog.log("MAINT", "Auto-deleted posted video: ${item.title.take(60)}")
                 } catch (e: Exception) {
                     // File already gone or locked — drop the reference so we
                     // don't retry forever.
-                    dao.update(item.copy(localUri = null))
+                    dao.clearLocalUri(item.id)
                     AppLog.log("MAINT", "Delete skipped for ${item.title.take(40)}: ${e.message}")
                 }
             }

@@ -25,6 +25,20 @@ import kotlinx.coroutines.withTimeoutOrNull
 class PostActivity : Activity() {
 
     private lateinit var statusText: TextView
+    private var reported = false
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Closed early (back press / system kill) without a result: tell the
+        // worker so it doesn't wait out its full timeout. Skip test/flow runs
+        // (they don't use the worker deferred) and already-reported runs.
+        if (!reported &&
+            !intent.getBooleanExtra(EXTRA_TEST, false) &&
+            !intent.getBooleanExtra(EXTRA_FLOW_SETUP, false)
+        ) {
+            PostWorker.completeResult(false, "Posting screen was closed before finishing")
+        }
+    }
 
     private fun setStatus(msg: String) {
         runOnUiThread { statusText.text = "ReelPilot\n\n$msg" }
@@ -73,6 +87,7 @@ class PostActivity : Activity() {
 
         // Drive everything: pre-warm the target app, then share the video into it.
         CoroutineScope(Dispatchers.Default).launch {
+            try {
             // 1) Open the app normally first so its process is warm —
             //    sharing into a warm app opens the composer quickly.
             val warmOk = try {
@@ -146,6 +161,13 @@ class PostActivity : Activity() {
             } ?: Pair(false, "Posting timed out")
             finishWith(result.first, result.second)
             finish()
+            } catch (e: Exception) {
+                // Never die silently: an unreported crash would leave the
+                // queue worker waiting forever and block all later posts.
+                AppLog.log("POST", "Posting error: ${e.message}")
+                finishWith(false, "Posting error: ${e.message?.take(200)}")
+                finish()
+            }
         }
     }
 
@@ -157,6 +179,7 @@ class PostActivity : Activity() {
 
     /** Test runs (Settings → Test flow) report here instead of the queue worker. */
     private fun finishWith(ok: Boolean, msg: String) {
+        reported = true
         val label = appLabel(
             intent.getStringExtra(EXTRA_TARGET) ?: ReelAccessibilityService.INSTAGRAM_PACKAGE
         )

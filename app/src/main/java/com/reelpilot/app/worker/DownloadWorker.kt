@@ -11,6 +11,7 @@ import com.reelpilot.app.python.ProgressBridge
 import com.reelpilot.app.telegram.TelegramClient
 import com.reelpilot.app.util.AppLog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -31,7 +32,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
         val item = dao.byId(id) ?: return Result.success()
         if (item.status != Status.QUEUED) return Result.success()
 
-        dao.update(item.copy(status = Status.DOWNLOADING))
+        dao.setStatus(id, Status.DOWNLOADING)
         AppLog.log("DL", "Starting: ${item.title}")
 
         try {
@@ -39,7 +40,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
                 "file" -> downloadTelegramFile(item)
                 else -> downloadLink(item)
             }
-            dao.update(item.copy(status = Status.READY, localUri = uri, progress = 100))
+            dao.markDownloaded(id, uri)
 
             // Assign its slot in the schedule and report the exact time.
             QueueScheduler.reschedule(applicationContext)
@@ -88,7 +89,7 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
             }
         } catch (e: Exception) {
             AppLog.log("DL", "Failed: ${e.message}")
-            dao.update(item.copy(status = Status.FAILED, error = e.message?.take(300)))
+            dao.markFailed(id, e.message?.take(300))
             TelegramClient(SettingsRepo.get(applicationContext).current().botToken)
                 .sendMessage(item.chatId, "❌ Download failed: ${e.message?.take(200)}")
         }
@@ -99,14 +100,18 @@ class DownloadWorker(context: Context, params: WorkerParameters) :
         val dao = AppDatabase.get(applicationContext).queueDao()
         val job = launch(Dispatchers.IO) {
             while (isActive) {
-                dao.update(item.copy(status = Status.DOWNLOADING, progress = ProgressBridge.progress.value))
+                // Column-only update: never touch status/caption fields that
+                // the parallel CaptionWorker may be writing at the same time.
+                dao.setProgress(item.id, ProgressBridge.progress.value)
                 delay(3000)
             }
         }
         try {
             YtDlpBridge.downloadAndSave(applicationContext, item.url).first
         } finally {
-            job.cancel()
+            // Wait for the poller to fully stop before the caller marks the
+            // item READY — a lingering poll used to revert READY→DOWNLOADING.
+            job.cancelAndJoin()
         }
     }
 

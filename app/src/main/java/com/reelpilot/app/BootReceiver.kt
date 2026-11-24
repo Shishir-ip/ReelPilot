@@ -12,6 +12,8 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
             PostWorker.schedulePeriodic(context)
             WatchWorker.schedule(context)
+            // Re-arm the exact wake-up for the next waiting slot.
+            com.reelpilot.app.worker.PostAlarm.schedule(context)
         }
     }
 }

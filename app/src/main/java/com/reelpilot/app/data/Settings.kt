@@ -44,7 +44,12 @@ data class AppSettings(
     val captionPrompt: String = "",      // blank = built-in default prompt
     val captionResponseField: String = "",  // blank = "banglaCaption"
     val captionModes: String = "",       // JSON {"pkg": "generated|manual|none"}
-    val captionManual: String = ""       // JSON {"pkg": "manual text"}
+    val captionManual: String = "",      // JSON {"pkg": "manual text"}
+    // CaptAPI + Gemini caption methods
+    val captApis: String = "",           // JSON pool of CaptAPI keys (token limits)
+    val geminiApis: String = "",         // JSON pool of Gemini API keys (request limits)
+    val geminiPrompt: String = "",       // blank = built-in default Gemini prompt
+    val captionMethods: String = ""      // JSON {"details":"false",...}; blank = all on
 )
 
 class SettingsRepo(private val context: Context) {
@@ -76,6 +81,10 @@ class SettingsRepo(private val context: Context) {
         val CAPTION_RESPONSE_FIELD = stringPreferencesKey("caption_response_field")
         val CAPTION_MODES = stringPreferencesKey("caption_modes")
         val CAPTION_MANUAL = stringPreferencesKey("caption_manual")
+        val CAPT_APIS = stringPreferencesKey("capt_apis")
+        val GEMINI_APIS = stringPreferencesKey("gemini_apis")
+        val GEMINI_PROMPT = stringPreferencesKey("gemini_prompt")
+        val CAPTION_METHODS = stringPreferencesKey("caption_methods")
     }
 
     val flow: Flow<AppSettings> = context.dataStore.data.map { p ->
@@ -107,7 +116,11 @@ class SettingsRepo(private val context: Context) {
             captionPrompt = p[Keys.CAPTION_PROMPT] ?: "",
             captionResponseField = p[Keys.CAPTION_RESPONSE_FIELD] ?: "",
             captionModes = p[Keys.CAPTION_MODES] ?: "",
-            captionManual = p[Keys.CAPTION_MANUAL] ?: ""
+            captionManual = p[Keys.CAPTION_MANUAL] ?: "",
+            captApis = p[Keys.CAPT_APIS] ?: "",
+            geminiApis = p[Keys.GEMINI_APIS] ?: "",
+            geminiPrompt = p[Keys.GEMINI_PROMPT] ?: "",
+            captionMethods = p[Keys.CAPTION_METHODS] ?: ""
         )
     }
 
@@ -157,6 +170,10 @@ class SettingsRepo(private val context: Context) {
     suspend fun setCaptionResponseField(v: String) = context.dataStore.edit { it[Keys.CAPTION_RESPONSE_FIELD] = v }
     suspend fun setCaptionModes(json: String) = context.dataStore.edit { it[Keys.CAPTION_MODES] = json }
     suspend fun setCaptionManual(json: String) = context.dataStore.edit { it[Keys.CAPTION_MANUAL] = json }
+    suspend fun setCaptApis(json: String) = context.dataStore.edit { it[Keys.CAPT_APIS] = json }
+    suspend fun setGeminiApis(json: String) = context.dataStore.edit { it[Keys.GEMINI_APIS] = json }
+    suspend fun setGeminiPrompt(v: String) = context.dataStore.edit { it[Keys.GEMINI_PROMPT] = v }
+    suspend fun setCaptionMethods(json: String) = context.dataStore.edit { it[Keys.CAPTION_METHODS] = json }
 
     /** Save (or overwrite) the recorded flow for one target app. */
     suspend fun setFlow(pkg: String, steps: List<com.reelpilot.app.util.FlowStep>) {
@@ -192,6 +209,21 @@ class SettingsRepo(private val context: Context) {
     companion object {
         const val INSTAGRAM = "com.instagram.android"
         val DEFAULT_PROMPT = "Based on the video transcript, write 1 short, catchy bangla caption in natural, conversational Bangla (not robotic or overly formal) that works across Reels, TikTok, and Shorts. Keep it 2–3 lines max with a strong hook, 1–2 emojis and 3 relevant hashtags."
+
+        val DEFAULT_GEMINI_PROMPT = "Generate a catchy, scroll-stopping Bangla caption based on the video summary. Make it emotional, impactful and relatable. Keep it to 1–2 short sentences with exactly 2 relevant emojis and 3 relevant hashtags. Start with a strong hook. Return only the ready-to-post caption."
+        const val GEMINI_MODEL = "gemini-3.5-flash-lite"
+
+        /** Caption methods in fallback order: 1 → 2 → 3. */
+        val METHOD_ORDER = listOf("details", "summary", "socialkit")
+
+        /** Enabled methods, in fallback order. Blank setting = all enabled. */
+        fun enabledMethods(s: AppSettings): List<String> {
+            val map = parseStringMap(s.captionMethods)
+            return METHOD_ORDER.filter { map[it] != "false" }
+        }
+
+        fun effectiveGeminiPrompt(s: AppSettings): String =
+            s.geminiPrompt.ifBlank { DEFAULT_GEMINI_PROMPT }
 
         fun parseCaptionApis(json: String): List<CaptionApi> = CaptionApi.parseList(json)
 

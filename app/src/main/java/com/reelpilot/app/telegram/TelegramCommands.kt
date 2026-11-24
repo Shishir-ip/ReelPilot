@@ -170,16 +170,29 @@ object TelegramCommands {
             }
 
             "/api" -> {
-                val apis = SettingsRepo.parseCaptionApis(settings.captionApis)
-                if (apis.isEmpty()) {
+                val sb = StringBuilder("🔑 Caption API keys\n")
+                val pools = listOf(
+                    "CaptAPI (tokens)" to SettingsRepo.parseCaptionApis(settings.captApis),
+                    "Gemini (requests)" to SettingsRepo.parseCaptionApis(settings.geminiApis),
+                    "SocialKit (credits)" to SettingsRepo.parseCaptionApis(settings.captionApis)
+                )
+                var any = false
+                pools.forEach { (label, apis) ->
+                    if (apis.isNotEmpty()) {
+                        any = true
+                        sb.append("\n$label:\n")
+                        apis.forEachIndexed { i, a ->
+                            sb.append("${i + 1}. ${a.name} — ${a.used}/${a.limit} used, ${a.limit - a.used} left\n")
+                        }
+                    }
+                }
+                if (!any) {
                     client.sendMessage(chat, "🔑 No caption API keys added yet.\nAdd them in the app's Caption tab.")
                     return true
                 }
-                val sb = StringBuilder("🔑 Caption API keys:\n\n")
-                apis.forEachIndexed { i, a ->
-                    sb.append("${i + 1}. ${a.name} — ${a.used}/${a.limit} used, ${a.limit - a.used} left\n")
-                }
-                sb.append("\n💡 Keys rotate automatically while credit remains.")
+                val methods = SettingsRepo.enabledMethods(settings)
+                sb.append("\n⚙️ Methods on: ${methods.joinToString(" → ") { com.reelpilot.app.worker.CaptionGenerator.methodLabel(it) }}")
+                sb.append("\n💡 Keys rotate randomly while credit remains; methods fall back in order.")
                 client.sendMessage(chat, sb.toString())
             }
 

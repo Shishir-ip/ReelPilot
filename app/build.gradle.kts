@@ -13,8 +13,8 @@ android {
         applicationId = "com.reelpilot.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 22
-        versionName = "2.0.0"
+        versionCode = 26
+        versionName = "2.1.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
@@ -69,7 +69,13 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.11"
-        buildPython("python3.11")
+        // CI (Linux) exposes python3.11; on Windows the 3.11 interpreter is
+        // just "python" (or the py launcher). Pick whichever exists.
+        if (System.getProperty("os.name").lowercase().contains("windows")) {
+            buildPython("py", "-3.11")
+        } else {
+            buildPython("python3.11")
+        }
         pip {
             install("yt-dlp")
         }

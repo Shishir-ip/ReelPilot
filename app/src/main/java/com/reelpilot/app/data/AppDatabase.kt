@@ -66,6 +66,48 @@ interface QueueDao {
     @Query("UPDATE queue SET postAt = :postAt WHERE id = :id")
     suspend fun setPostAt(id: Long, postAt: Long)
 
+    // ---- Targeted column updates -----------------------------------------
+    // Workers run in parallel (download + caption + posting). Whole-row
+    // @Update writes from stale snapshots used to overwrite each other's
+    // fields (the "stuck on DOWNLOADING" bug). Every concurrent writer must
+    // use these single-purpose updates instead of update(item.copy(...)).
+
+    @Query("UPDATE queue SET status = :status WHERE id = :id")
+    suspend fun setStatus(id: Long, status: String)
+
+    @Query("UPDATE queue SET progress = :progress WHERE id = :id AND status = 'DOWNLOADING'")
+    suspend fun setProgress(id: Long, progress: Int)
+
+    @Query("UPDATE queue SET status = 'READY', localUri = :uri, progress = 100, error = NULL WHERE id = :id")
+    suspend fun markDownloaded(id: Long, uri: String)
+
+    @Query("UPDATE queue SET status = 'FAILED', error = :error WHERE id = :id")
+    suspend fun markFailed(id: Long, error: String?)
+
+    @Query("UPDATE queue SET captionStatus = :status WHERE id = :id")
+    suspend fun setCaptionStatus(id: Long, status: String)
+
+    @Query("UPDATE queue SET generatedCaption = :caption, captionStatus = 'done' WHERE id = :id")
+    suspend fun setGeneratedCaption(id: Long, caption: String)
+
+    @Query("UPDATE queue SET doneTargets = :done WHERE id = :id")
+    suspend fun setDoneTargets(id: Long, done: String)
+
+    @Query("UPDATE queue SET status = 'POSTED', uploadedAt = :at WHERE id = :id")
+    suspend fun markPosted(id: Long, at: Long)
+
+    @Query("UPDATE queue SET localUri = NULL WHERE id = :id")
+    suspend fun clearLocalUri(id: Long)
+
+    @Query("UPDATE queue SET status = 'QUEUED', progress = 0 WHERE id = :id")
+    suspend fun requeue(id: Long)
+
+    @Query("SELECT * FROM queue WHERE captionStatus = 'pending'")
+    suspend fun pendingCaptions(): List<QueueItem>
+
+    @Query("SELECT localUri FROM queue WHERE localUri IS NOT NULL")
+    suspend fun allLocalUris(): List<String>
+
     @Query("SELECT * FROM queue WHERE id = :id")
     suspend fun byId(id: Long): QueueItem?
 
@@ -98,6 +140,15 @@ interface QueueDao {
 
     @Query("UPDATE queue SET status = 'READY', error = NULL, progress = 100, postAt = 0 WHERE id = :id")
     suspend fun retry(id: Long)
+
+    /**
+     * Only runCheck sets POSTING, and it is serialized by its busy lock.
+     * So any POSTING row seen at the start of a check is an orphan from a
+     * killed/crashed attempt — put it back to READY (keeping postAt and
+     * doneTargets so the schedule and partial progress survive).
+     */
+    @Query("UPDATE queue SET status = 'READY' WHERE status = 'POSTING'")
+    suspend fun resetStalePosting(): Int
 }
 
 @Database(entities = [QueueItem::class], version = 5, exportSchema = false)

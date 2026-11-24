@@ -1,5 +1,6 @@
 package com.reelpilot.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -271,6 +272,29 @@ private fun QueueCard(
                     item.status,
                     style = MaterialTheme.typography.labelSmall,
                     color = statusColor(item.status)
+                )
+            }
+
+            // Caption that will post with this video (tap to expand).
+            if (item.captionStatus == "pending") {
+                Text(
+                    "✍️ Generating caption…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            val shownCaption = item.generatedCaption.ifBlank { item.caption }
+            if (shownCaption.isNotBlank()) {
+                var expanded by remember(item.id) { mutableStateOf(false) }
+                Text(
+                    "✍️ $shownCaption",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (expanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { expanded = !expanded }
                 )
             }
 

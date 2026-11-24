@@ -154,10 +154,10 @@ object TelegramIngest {
             AppLog.log("TG", "Duplicate skipped: ${item.title}")
             return
         }
-        // Link videos get an AI caption (SocialKit) generated while the
-        // download runs — only when the key pool has credit left.
+        // Link videos get an AI caption generated while the download runs —
+        // only when some enabled method has a key with credit left.
         val finalItem = if (item.source == "link" && !item.title.startsWith("[FLOW]") &&
-            CaptionApi.parseList(settings.captionApis).any { it.remaining > 0 }
+            com.reelpilot.app.worker.CaptionGenerator.anyMethodHasCredit(settings)
         ) item.copy(captionStatus = "pending") else item
 
         val id = dao.insert(finalItem)

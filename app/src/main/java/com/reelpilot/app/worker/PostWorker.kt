@@ -101,20 +101,43 @@ class PostWorker(context: Context, params: WorkerParameters) :
             if (!busy.compareAndSet(false, true)) return
             try {
                 val settings = SettingsRepo.get(ctx).current()
+                val dao = AppDatabase.get(ctx).queueDao()
+
+                // We hold the busy lock, so nothing is legitimately posting
+                // right now. Any POSTING row is left over from an attempt
+                // that died (process kill / crash) — recover it, otherwise
+                // it would never be picked up again (dueReady wants READY).
+                val recovered = dao.resetStalePosting()
+                if (recovered > 0) {
+                    AppLog.log("POST", "Recovered $recovered item(s) stuck in POSTING — back to READY")
+                }
 
                 // Pick up any Telegram messages that arrived while the poller was dead.
                 TelegramIngest.poll(ctx)
 
-                if (!settings.autoPost) return
+                if (!settings.autoPost) {
+                    AppLog.log("POST", "Skipped — auto-post is turned off in Settings")
+                    return
+                }
 
                 // Assign slots to any newly downloaded items, then pick the
                 // one whose scheduled time has arrived.
                 QueueScheduler.reschedule(ctx)
-                val dao = AppDatabase.get(ctx).queueDao()
                 val now = System.currentTimeMillis()
-                var item = dao.dueReady(now)
+                val picked = dao.dueReady(now)
                     ?: (if (forceNow) dao.oldestWithStatus(Status.READY) else null)
-                    ?: return
+                if (picked == null) {
+                    val next = dao.activeItems()
+                        .filter { it.status == Status.READY && it.postAt > 0 }
+                        .minOfOrNull { it.postAt }
+                    AppLog.log(
+                        "POST",
+                        if (next == null) "Check: nothing ready to post"
+                        else "Check: nothing due yet — next slot ${SimpleDateFormat("MMM d HH:mm", Locale.getDefault()).format(Date(next))}"
+                    )
+                    return
+                }
+                var item: com.reelpilot.app.data.QueueItem = picked
 
                 // The AI caption may still be generating — wait for it (bounded).
                 if (item.captionStatus == "pending") {
@@ -140,15 +163,18 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 val pending = targets.filter { it !in done }
                 if (pending.isEmpty()) {
                     // Everything already posted (e.g. targets changed mid-way).
-                    dao.update(item.copy(status = Status.POSTED, uploadedAt = System.currentTimeMillis()))
+                    dao.markPosted(item.id, System.currentTimeMillis())
                     return
                 }
 
                 val client = TelegramClient(settings.botToken)
                 for (pkg in pending) {
+                    // Re-read so a caption that finished generating after this
+                    // check started is still picked up for the next app.
+                    item = dao.byId(item.id) ?: return
                     val label = appLabel(ctx, pkg)
                     if (!isAppInstalled(ctx, pkg)) {
-                        dao.update(item.copy(status = Status.FAILED, error = "App $label not installed"))
+                        dao.markFailed(item.id, "App $label not installed")
                         client.sendMessage(
                             item.chatId,
                             "❌ $label is not installed on this phone.\nInstall it (and log in once), then tap ↻ Retry on this item in the app's Queue tab."
@@ -159,7 +185,7 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     if (pkg != SettingsRepo.INSTAGRAM &&
                         !SettingsRepo.parseFlows(settings.flows).containsKey(pkg)
                     ) {
-                        dao.update(item.copy(status = Status.FAILED, error = "No recorded flow for $label"))
+                        dao.markFailed(item.id, "No recorded flow for $label")
                         client.sendMessage(
                             item.chatId,
                             "⚠️ No recorded flow for $label.\nOpen ReelPilot → Settings → Post to apps → record a flow for it, then retry."
@@ -167,7 +193,7 @@ class PostWorker(context: Context, params: WorkerParameters) :
                         return
                     }
 
-                    dao.update(item.copy(status = Status.POSTING))
+                    dao.setStatus(item.id, Status.POSTING)
                     AppLog.log("POST", "Posting to $label: ${item.title}")
 
                     resultDeferred = CompletableDeferred()
@@ -179,15 +205,31 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     }
                     ctx.startActivity(intent)
 
-                    val (ok, msg) = resultDeferred!!.await()
+                    // Hard ceiling: PostActivity has its own 9-minute flow
+                    // timeout, but if it is killed/crashes before reporting,
+                    // an unbounded await would hold the busy lock forever and
+                    // silently block every future scheduled post.
+                    val result = kotlinx.coroutines.withTimeoutOrNull(12 * 60_000L) {
+                        resultDeferred!!.await()
+                    }
+                    if (result == null) {
+                        dao.markFailed(item.id, "$label: posting screen closed before finishing")
+                        client.sendMessage(
+                            item.chatId,
+                            "⚠️ Posting to $label was interrupted (screen closed or app killed).\nTap ↻ Retry on this item in the Queue tab — it resumes with the remaining apps."
+                        )
+                        AppLog.log("POST", "Timed out waiting for $label result — item marked FAILED, lock released")
+                        return
+                    }
+                    val (ok, msg) = result
                     AppLog.log("POST", "Result for $label: ok=$ok, $msg")
 
                     if (ok) {
                         done.add(pkg)
-                        dao.update(item.copy(doneTargets = done.joinToString(",")))
+                        dao.setDoneTargets(item.id, done.joinToString(","))
                         client.sendMessage(item.chatId, "🚀 Posted to $label: ${item.title}")
                     } else {
-                        dao.update(item.copy(status = Status.FAILED, error = "$label: ${msg.take(280)}"))
+                        dao.markFailed(item.id, "$label: ${msg.take(280)}")
                         // Advance the schedule anyway so failures don't retry in a tight loop.
                         val nextAt = System.currentTimeMillis() + settings.intervalHours * 60 * 60 * 1000L
                         SettingsRepo.get(ctx).setNextPostAt(nextAt)
@@ -200,7 +242,7 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 }
 
                 // All targets done — the item is fully posted.
-                dao.update(item.copy(status = Status.POSTED, uploadedAt = System.currentTimeMillis()))
+                dao.markPosted(item.id, System.currentTimeMillis())
                 val nextAt = System.currentTimeMillis() + settings.intervalHours * 60 * 60 * 1000L
                 SettingsRepo.get(ctx).setNextPostAt(nextAt)
                 val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nextAt))
@@ -212,6 +254,10 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 QueueScheduler.reschedule(ctx)
             } finally {
                 busy.set(false)
+                // Re-arm the exact wake-up for the next waiting slot (or
+                // cancel it when nothing is waiting). Due-but-skipped items
+                // are retried by the 15-minute sweep, not a tight alarm loop.
+                runCatching { PostAlarm.schedule(ctx) }
             }
         }
 
@@ -247,20 +293,42 @@ class PostWorker(context: Context, params: WorkerParameters) :
          * Schedule a posting check aimed at the earliest waiting slot: it
          * fires when the slot time arrives (immediately if due now), so a
          * manually set time is honoured instead of waiting for the next
-         * 15-minute sweep. Never cancels a running check (APPEND policy).
+         * 15-minute sweep.
+         *
+         * Policy: if a check is RUNNING, append after it (never interrupt a
+         * live post). Otherwise REPLACE — APPEND would chain the new check
+         * behind a previously enqueued delayed check, so a time change via
+         * /time or the Queue editor would not actually fire until the OLD
+         * slot arrived (the "shows now but never uploads" bug).
          */
         fun scheduleOneTime(context: Context, forceNow: Boolean = false) {
-            val delayMs = if (forceNow) 0L else {
-                val earliest = runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                    try {
+            val wm = WorkManager.getInstance(context)
+            val (delayMs, running) = runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                val isRunning = try {
+                    wm.getWorkInfosForUniqueWork(ONESHOT).get()
+                        .any { it.state == androidx.work.WorkInfo.State.RUNNING }
+                } catch (e: Exception) {
+                    false
+                }
+                val d = if (forceNow) 0L else {
+                    val earliest = try {
                         AppDatabase.get(context).queueDao().activeItems()
-                            .filter { it.status == Status.READY && it.postAt > 0 }
+                            // POSTING counts too: if it's an orphan from a killed
+                            // attempt, the check resets it to READY and posts it.
+                            .filter { (it.status == Status.READY || it.status == Status.POSTING) && it.postAt > 0 }
                             .minOfOrNull { it.postAt }
                     } catch (e: Exception) {
                         null
                     }
-                } ?: return  // nothing ready to post — periodic sweep covers future additions
-                (earliest - System.currentTimeMillis()).coerceAtLeast(0L)
+                    if (earliest == null) -1L
+                    else (earliest - System.currentTimeMillis()).coerceAtLeast(0L)
+                }
+                d to isRunning
+            }
+            if (delayMs < 0) {
+                // Nothing ready to post — drop any stale wake-up.
+                PostAlarm.schedule(context)
+                return
             }
             val builder = OneTimeWorkRequestBuilder<PostWorker>()
                 .setInputData(workDataOf("force" to forceNow))
@@ -268,11 +336,14 @@ class PostWorker(context: Context, params: WorkerParameters) :
             if (delayMs == 0L) {
                 builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             }
-            WorkManager.getInstance(context).enqueueUniqueWork(
+            wm.enqueueUniqueWork(
                 ONESHOT,
-                ExistingWorkPolicy.APPEND_OR_REPLACE,
+                if (running) ExistingWorkPolicy.APPEND else ExistingWorkPolicy.REPLACE,
                 builder.build()
             )
+            // Exact-alarm wake-up so Doze/battery saver can't push the slot
+            // into a late maintenance window.
+            PostAlarm.schedule(context)
         }
     }
 }
