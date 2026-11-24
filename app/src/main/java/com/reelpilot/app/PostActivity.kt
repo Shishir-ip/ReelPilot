@@ -105,7 +105,7 @@ class PostActivity : Activity() {
                 startActivity(send)
             } catch (e: Exception) {
                 AppLog.log("POST", "Could not launch share into $target: ${e.message}")
-                PostWorker.completeResult(false, "Could not launch ${appLabel(target)}: ${e.message?.take(200)}")
+                finishWith(false, "Could not launch ${appLabel(target)}: ${e.message?.take(200)}")
                 finish()
                 return@launch
             }
@@ -115,7 +115,7 @@ class PostActivity : Activity() {
                 setStatus("Position your tap steps,\nthen tap Save on the panel")
                 val svc = ReelAccessibilityService.instance
                 if (svc == null) {
-                    PostWorker.completeResult(false, "Accessibility service is not enabled")
+                    finishWith(false, "Accessibility service is not enabled")
                     finish()
                     return@launch
                 }
@@ -144,7 +144,7 @@ class PostActivity : Activity() {
                     svc.postFlow(caption, target)
                 }
             } ?: Pair(false, "Posting timed out")
-            PostWorker.completeResult(result.first, result.second)
+            finishWith(result.first, result.second)
             finish()
         }
     }
@@ -155,7 +155,30 @@ class PostActivity : Activity() {
         pkg.substringAfterLast('.').ifBlank { pkg }
     }
 
+    /** Test runs (Settings → Test flow) report here instead of the queue worker. */
+    private fun finishWith(ok: Boolean, msg: String) {
+        val label = appLabel(
+            intent.getStringExtra(EXTRA_TARGET) ?: ReelAccessibilityService.INSTAGRAM_PACKAGE
+        )
+        if (intent.getBooleanExtra(EXTRA_TEST, false)) {
+            testResults.value = TestResult(label, ok, msg)
+            runOnUiThread {
+                android.widget.Toast.makeText(
+                    this, (if (ok) "✅ " else "❌ ") + "Flow test ($label): " + msg,
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        } else {
+            PostWorker.completeResult(ok, msg)
+        }
+        finish()
+    }
+
     companion object {
+        const val EXTRA_TEST = "test_mode"
+        data class TestResult(val app: String, val ok: Boolean, val message: String)
+        val testResults = kotlinx.coroutines.flow.MutableStateFlow<TestResult?>(null)
+
         const val EXTRA_URI = "uri"
         const val EXTRA_CAPTION = "caption"
         const val EXTRA_FLOW_SETUP = "flow_setup"

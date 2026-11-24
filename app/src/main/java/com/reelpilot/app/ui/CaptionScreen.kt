@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.reelpilot.app.data.AppSettings
+import com.reelpilot.app.data.CaptionApi
 import com.reelpilot.app.data.SettingsRepo
 import com.reelpilot.app.worker.PostWorker
 import kotlinx.coroutines.launch
@@ -122,7 +123,7 @@ fun CaptionScreen() {
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Generation prompt", style = MaterialTheme.typography.titleMedium)
-                var prompt by remember(settings.captionPrompt) { mutableStateOf(settings.captionPrompt) }
+                var prompt by remember(settings.captionPrompt) { mutableStateOf(settings.captionPrompt.ifBlank { SettingsRepo.DEFAULT_PROMPT }) }
                 OutlinedTextField(
                     value = prompt,
                     onValueChange = { prompt = it },
@@ -140,6 +141,7 @@ fun CaptionScreen() {
                     TextButton(onClick = {
                         scope.launch {
                             SettingsRepo.get(context).setCaptionPrompt("")
+                            prompt = SettingsRepo.DEFAULT_PROMPT
                             toast("Prompt reset to default")
                         }
                     }) { Text("Reset to default") }
@@ -264,7 +266,7 @@ fun CaptionScreen() {
                     scope.launch {
                         val list = SettingsRepo.parseCaptionApis(settings.captionApis).toMutableList()
                         list.add(
-                            SettingsRepo.CaptionApi(
+                            CaptionApi(
                                 name = name.ifBlank { "Key ${list.size + 1}" },
                                 key = key.trim(),
                                 limit = limit.toIntOrNull()?.coerceIn(1, 100000) ?: 20,

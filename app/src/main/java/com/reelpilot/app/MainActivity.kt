@@ -32,6 +32,7 @@ import com.reelpilot.app.ui.LogsScreen
 import com.reelpilot.app.ui.QueueScreen
 import com.reelpilot.app.ui.ReelPilotTheme
 import com.reelpilot.app.ui.SettingsScreen
+import com.reelpilot.app.ui.CaptionScreen
 import com.reelpilot.app.ui.DashboardScreen
 import kotlinx.coroutines.launch
 

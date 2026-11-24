@@ -112,9 +112,20 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 QueueScheduler.reschedule(ctx)
                 val dao = AppDatabase.get(ctx).queueDao()
                 val now = System.currentTimeMillis()
-                val item = dao.dueReady(now)
+                var item = dao.dueReady(now)
                     ?: (if (forceNow) dao.oldestWithStatus(Status.READY) else null)
                     ?: return
+
+                // The AI caption may still be generating — wait for it (bounded).
+                if (item.captionStatus == "pending") {
+                    AppLog.log("POST", "Waiting for the caption to finish generating…")
+                    val deadline = System.currentTimeMillis() + 10 * 60_000L
+                    while (System.currentTimeMillis() < deadline) {
+                        val fresh = dao.byId(item.id) ?: return
+                        if (fresh.captionStatus != "pending") { item = fresh; break }
+                        kotlinx.coroutines.delay(5000)
+                    }
+                }
 
                 if (!ReelAccessibilityService.isServiceEnabled(ctx)) {
                     AppLog.log("POST", "Skipped — accessibility service not enabled yet")

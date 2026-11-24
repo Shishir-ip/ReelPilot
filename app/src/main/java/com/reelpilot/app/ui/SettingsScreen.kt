@@ -359,6 +359,48 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}) {
                         maxLines = 1
                     )
                 }
+                HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
+                Text("Test a flow", style = MaterialTheme.typography.titleSmall)
+                var testCaption by remember {
+                    mutableStateOf("Test caption from ReelPilot 🤖 #test")
+                }
+                OutlinedTextField(
+                    value = testCaption,
+                    onValueChange = { testCaption = it },
+                    label = { Text("Caption to type during the test (clear it to test without one)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+                Button(
+                    onClick = {
+                        val pkg = recordTarget
+                        val uri = pickedUri
+                        if (pkg == null) { toast("Select which app to test first"); return@Button }
+                        if (uri == null) { toast("Pick a material video first"); return@Button }
+                        com.reelpilot.app.PostActivity.testResults.value = null
+                        context.startActivity(
+                            android.content.Intent(context, com.reelpilot.app.PostActivity::class.java)
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                .putExtra(com.reelpilot.app.PostActivity.EXTRA_URI, uri)
+                                .putExtra(com.reelpilot.app.PostActivity.EXTRA_CAPTION, testCaption)
+                                .putExtra(com.reelpilot.app.PostActivity.EXTRA_TARGET, pkg)
+                                .putExtra(com.reelpilot.app.PostActivity.EXTRA_TEST, true)
+                        )
+                    },
+                    enabled = pickedUri != null && recordTarget != null,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "▶ Test flow" + (recordTarget?.let { " for " + com.reelpilot.app.worker.PostWorker.appLabel(context, it) } ?: ""),
+                        maxLines = 1
+                    )
+                }
+                Text(
+                    "This really uploads the material video with the app's flow, so you see the taps and caption typing work. A flow passes when all its steps ran.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 Text(
                     "In the recorder: ＋ adds a numbered marker — drag each one onto the button the app should tap, in order. Long-press removes a marker, ✔ Save. Markers are positions only — nothing is tapped until a real post runs.",
                     style = MaterialTheme.typography.bodySmall,
@@ -556,6 +598,20 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}) {
             onClick = onOpenLogs,
             modifier = Modifier.fillMaxWidth()
         ) { Text("🧾 Activity logs") }
+
+        val testResult by com.reelpilot.app.PostActivity.testResults.collectAsState()
+        testResult?.let { r ->
+            AlertDialog(
+                onDismissRequest = { com.reelpilot.app.PostActivity.testResults.value = null },
+                title = { Text((if (r.ok) "✅ Flow test passed — " else "❌ Flow test failed — ") + r.app) },
+                text = { Text(r.message) },
+                confirmButton = {
+                    TextButton(onClick = { com.reelpilot.app.PostActivity.testResults.value = null }) {
+                        Text("OK")
+                    }
+                }
+            )
+        }
 
         SnackbarHost(snackbar)
     }

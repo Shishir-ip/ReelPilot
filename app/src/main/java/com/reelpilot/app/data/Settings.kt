@@ -191,34 +191,11 @@ class SettingsRepo(private val context: Context) {
 
     companion object {
         const val INSTAGRAM = "com.instagram.android"
+        val DEFAULT_PROMPT = "Based on the video transcript, write 1 short, catchy bangla caption in natural, conversational Bangla (not robotic or overly formal) that works across Reels, TikTok, and Shorts. Keep it 2–3 lines max with a strong hook, 1–2 emojis and 3 relevant hashtags."
 
-        data class CaptionApi(val name: String, val key: String, val limit: Int, val used: Int)
+        fun parseCaptionApis(json: String): List<CaptionApi> = CaptionApi.parseList(json)
 
-        fun parseCaptionApis(json: String): List<CaptionApi> = try {
-            val arr = org.json.JSONArray(json)
-            (0 until arr.length()).mapNotNull { i ->
-                val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                CaptionApi(
-                    o.optString("name", "key"),
-                    o.optString("key", ""),
-                    o.optInt("limit", 20),
-                    o.optInt("used", 0)
-                )
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
-
-        fun captionApisToJson(apis: List<CaptionApi>): String {
-            val arr = org.json.JSONArray()
-            apis.forEach { a ->
-                arr.put(org.json.JSONObject().apply {
-                    put("name", a.name); put("key", a.key)
-                    put("limit", a.limit); put("used", a.used)
-                })
-            }
-            return arr.toString()
-        }
+        fun captionApisToJson(apis: List<CaptionApi>): String = CaptionApi.toJson(apis)
 
         fun parseTargets(csv: String): List<String> =
             csv.split(',').map { it.trim() }.filter { it.isNotEmpty() }
@@ -227,7 +204,7 @@ class SettingsRepo(private val context: Context) {
         /** Effective prompt: user's custom one, or the sensible Bangla default. */
         fun effectivePrompt(s: AppSettings): String =
             s.captionPrompt.ifBlank {
-                "Based on the video transcript, write 1 short, catchy bangla caption in natural, conversational Bangla (not robotic or overly formal) that works across Reels, TikTok, and Shorts. Keep it 2–3 lines max with a strong hook, 1–2 emojis and 3 relevant hashtags."
+                DEFAULT_PROMPT
             }
 
         fun effectiveResponseField(s: AppSettings): String =

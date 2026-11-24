@@ -38,6 +38,7 @@ data class QueueItem(
     val uploadedAt: Long = 0,           // when the reel actually went live (for auto-delete)
     val doneTargets: String = "",       // target apps this video has already been posted to
     val generatedCaption: String = "",  // AI caption from SocialKit (link videos)
+    val captionStatus: String = "",     // "", "pending", "done", "failed", "skipped"
     val error: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
@@ -128,6 +129,7 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE queue ADD COLUMN generatedCaption TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE queue ADD COLUMN captionStatus TEXT NOT NULL DEFAULT ''")
             }
         }
 

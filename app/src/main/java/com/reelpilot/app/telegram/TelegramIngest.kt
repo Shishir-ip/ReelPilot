@@ -6,6 +6,7 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.reelpilot.app.data.AppDatabase
 import com.reelpilot.app.data.AppSettings
+import com.reelpilot.app.data.CaptionApi
 import com.reelpilot.app.data.QueueDao
 import com.reelpilot.app.data.QueueItem
 import com.reelpilot.app.data.SettingsRepo
@@ -146,13 +147,20 @@ object TelegramIngest {
         dao: QueueDao,
         item: QueueItem
     ) {
+        val settings = SettingsRepo.get(context).current()
         // Dedupe: never queue the same link/file twice while it's still active.
         if (dao.activeCountForUrl(item.url) > 0) {
             client.sendMessage(item.chatId, "ℹ️ Already in the queue: ${item.title}")
             AppLog.log("TG", "Duplicate skipped: ${item.title}")
             return
         }
-        val id = dao.insert(item)
+        // Link videos get an AI caption (SocialKit) generated while the
+        // download runs — only when the key pool has credit left.
+        val finalItem = if (item.source == "link" && !item.title.startsWith("[FLOW]") &&
+            CaptionApi.parseList(settings.captionApis).any { it.remaining > 0 }
+        ) item.copy(captionStatus = "pending") else item
+
+        val id = dao.insert(finalItem)
         // Sequential download chain: links sent in a burst download one by
         // one instead of running yt-dlp against itself.
         WorkManager.getInstance(context).enqueueUniqueWork(
@@ -163,7 +171,7 @@ object TelegramIngest {
                 .build()
         )
         // AI caption generation (link videos only, [FLOW] material excluded).
-        if (item.source == "link" && !item.title.startsWith("[FLOW]")) {
+        if (finalItem.captionStatus == "pending") {
             com.reelpilot.app.worker.CaptionWorker.enqueue(context, id)
         }
         val active = dao.activeItems()

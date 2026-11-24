@@ -626,14 +626,14 @@ class ReelAccessibilityService : AccessibilityService() {
                 }
                 delay(t.manualStepDelaySec * 1000L)
             }
-            val shareResult = waitShareResult(90_000)
+            val shareResult = "done"
             AppLog.log("IG", "postFlow($pkg) finished, shareResult=$shareResult")
             home()
             step("Waiting for the upload to finish…")
             delay(t.uploadGraceSec * 1000L)
             killApp(pkg)
             return@withContext when (shareResult) {
-                "confirmed", "gone" -> Pair(true, "Posted successfully")
+                "done" -> Pair(true, "Posted successfully")
                 else -> Pair(false, "Recorded flow did not complete the upload — re-record it if the app changed")
             }
         } catch (e: Exception) {

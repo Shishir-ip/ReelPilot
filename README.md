@@ -43,6 +43,7 @@ Link videos get an **auto-generated caption** before posting, powered by [Social
 - The caption is generated with the **original link** right after it's queued — the bot announces it with the credit cost
 - The prompt is fully customizable (defaults to a natural conversational Bangla caption prompt), and the response field name is configurable (default `banglaCaption` — add it as a custom response field in your SocialKit dashboard)
 - **Per-app caption rules** in the Caption tab: 🤖 Generated / ✏️ Manual text / 🚫 None for each posting app
+- **Test any flow** (Settings → Post to apps → Test flow) with your own caption box before trusting it with the queue
 - **Flows can type captions too**: record a flow for any app and add a **✍ caption step** marker — at replay the app taps that spot and types the video's caption into it (direct set-text with clipboard-paste fallback)
 
 ## Post to multiple apps 🌍
