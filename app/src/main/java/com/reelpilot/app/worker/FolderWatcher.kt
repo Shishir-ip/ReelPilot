@@ -67,7 +67,8 @@ object FolderWatcher {
                         source = "gallery",
                         url = localUri,
                         title = name,
-                        caption = "",
+                        // Local videos post with their file name as the caption.
+                        caption = name.substringBeforeLast('.').ifBlank { name },
                         chatId = settings.lastChatId,
                         status = Status.READY,
                         progress = 100,

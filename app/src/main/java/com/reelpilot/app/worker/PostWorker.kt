@@ -115,6 +115,14 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 // Pick up any Telegram messages that arrived while the poller was dead.
                 TelegramIngest.poll(ctx)
 
+                // Revive the always-on poller if the OEM killed it — it is also
+                // the retry loop for pending post-result notifications. Then
+                // deliver anything still waiting in the outbox right now.
+                if (settings.botToken.isNotBlank()) {
+                    runCatching { com.reelpilot.app.telegram.TgPollService.start(ctx) }
+                    runCatching { NotifyOutbox.flush(ctx) }
+                }
+
                 if (!settings.autoPost) {
                     AppLog.log("POST", "Skipped — auto-post is turned off in Settings")
                     return
@@ -273,6 +281,9 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 QueueScheduler.reschedule(ctx)
             } finally {
                 busy.set(false)
+                // Last-chance delivery of this check's result messages in case
+                // the inline send inside enqueue() failed (network hiccup…).
+                runCatching { NotifyOutbox.flush(ctx) }
                 // Re-arm the exact wake-up for the next waiting slot (or
                 // cancel it when nothing is waiting). Due-but-skipped items
                 // are retried by the 15-minute sweep, not a tight alarm loop.

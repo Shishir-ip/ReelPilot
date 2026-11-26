@@ -4,6 +4,8 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import com.reelpilot.app.data.SettingsRepo
+import com.reelpilot.app.telegram.TgPollService
 import com.reelpilot.app.worker.PostWorker
 import com.reelpilot.app.worker.QueueRepair
 import com.reelpilot.app.worker.WatchWorker
@@ -22,6 +24,15 @@ class ReelPilotApp : Application() {
         // Heal any queue rows left stuck by the 2.0.0 download/caption race.
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             runCatching { QueueRepair.run(this@ReelPilotApp) }
+            // The poller also delivers pending post-result notifications
+            // (NotifyOutbox). Start it whenever the app process starts —
+            // previously it only started from the UI, so after an OEM kill
+            // or reboot notifications were never retried.
+            runCatching {
+                if (SettingsRepo.get(this@ReelPilotApp).current().botToken.isNotBlank()) {
+                    TgPollService.start(this@ReelPilotApp)
+                }
+            }
         }
     }
 

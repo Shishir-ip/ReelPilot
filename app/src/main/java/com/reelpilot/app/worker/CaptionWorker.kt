@@ -188,8 +188,8 @@ object CaptionGenerator {
                 val label = methodLabel(method)
                 AppLog.log("CAP", "Caption ready via $label")
                 runCatching {
-                    TelegramClient(s.botToken).sendMessage(
-                        item.chatId,
+                    com.reelpilot.app.telegram.NotifyOutbox.enqueue(
+                        ctx, item.chatId,
                         "✍️ Caption generated ($label): ${item.title.take(60)}\n\n$caption"
                     )
                 }
@@ -200,9 +200,9 @@ object CaptionGenerator {
 
         dao.setCaptionStatus(itemId, "failed")
         runCatching {
-            TelegramClient(s.botToken).sendMessage(
-                item.chatId,
-                "⚠️ Caption generation failed on all enabled methods.\nThe video will post with its own/default caption."
+            com.reelpilot.app.telegram.NotifyOutbox.enqueue(
+                ctx, item.chatId,
+                "⚠️ Caption generation failed on all enabled methods: ${item.title.take(60)}\nThe video will post with its own/default caption."
             )
         }
         AppLog.log("CAP", "All methods failed — using default caption")

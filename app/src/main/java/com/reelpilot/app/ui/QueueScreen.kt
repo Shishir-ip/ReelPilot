@@ -78,7 +78,9 @@ private suspend fun addGalleryVideo(context: android.content.Context, uri: andro
             source = "gallery",
             url = uri.toString(),
             title = name,
-            caption = "",
+            // Local videos post with their file name as the caption —
+            // no AI generation (there is no link to fetch one from).
+            caption = name.substringBeforeLast('.').ifBlank { name },
             chatId = s.lastChatId,
             status = Status.READY,
             progress = 100,

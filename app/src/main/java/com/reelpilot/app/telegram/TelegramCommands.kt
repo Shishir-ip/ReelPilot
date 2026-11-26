@@ -41,14 +41,17 @@ object TelegramCommands {
                 }
                 val sb = StringBuilder("📋 Queue (${active.size}):\n\n")
                 active.forEachIndexed { i, item ->
+                    // Caption first (generated → sent text → title), then the
+                    // upload time, then the link — one per line.
+                    val cap = item.generatedCaption.ifBlank { item.caption.ifBlank { item.title } }
+                        .replace(Regex("\\s+"), " ").trim().take(150)
                     val slot = when {
-                        item.status == Status.READY || item.status == Status.POSTING ->
-                            "📅 ${fmt(item.postAt)}"
+                        item.status == Status.READY || item.status == Status.POSTING -> fmt(item.postAt)
                         item.status == Status.FAILED -> "❌ failed: ${item.error?.take(60)}"
                         else -> "⏳ downloading… ${item.progress}%"
                     }
-                    val link = if (item.source == "link") "\n   ${item.url.take(80)}" else "\n   (video file)"
-                    sb.append("${i + 1}. ${item.title.take(70)}\n   $slot$link\n\n")
+                    val link = if (item.source == "link") item.url else "(video file)"
+                    sb.append("${i + 1}. $cap\n$slot\n$link\n\n")
                     if (sb.length > 3300) {
                         sb.append("…and ${active.size - i - 1} more")
                         return@forEachIndexed
@@ -90,6 +93,31 @@ object TelegramCommands {
                 dao.delete(item.id)
                 QueueScheduler.reschedule(context)
                 client.sendMessage(chat, "🗑️ Removed: ${item.title}\nLater videos shifted up.")
+            }
+
+            "/regenerate", "/regen" -> {
+                val n = parts.getOrNull(1)?.toIntOrNull()
+                if (n == null || n < 1) {
+                    client.sendMessage(chat, "Usage: /regenerate 2  (number from /list)\nGenerates a fresh caption with your enabled methods.")
+                    return true
+                }
+                val active = dao.activeItems()
+                if (n > active.size) {
+                    client.sendMessage(chat, "No item #$n — only ${active.size} in queue. See /list")
+                    return true
+                }
+                val item = active[n - 1]
+                if (item.source != "link") {
+                    client.sendMessage(chat, "ℹ️ #$n is a local video (gallery/file) — there is no link to fetch a caption from.\nIts caption is its file name; edit it in the app Queue or set a default with /caption.")
+                    return true
+                }
+                if (item.captionStatus == "pending") {
+                    client.sendMessage(chat, "⏳ #$n is already generating a caption — check /list in a moment.")
+                    return true
+                }
+                dao.setCaptionStatus(item.id, "pending")
+                com.reelpilot.app.worker.CaptionWorker.enqueue(context, item.id)
+                client.sendMessage(chat, "✍️ Generating a new caption for #$n using your enabled methods…\nYou'll get it here when it's ready (also in /list and the app Queue).")
             }
 
             "/clear" -> {
@@ -228,9 +256,10 @@ object TelegramCommands {
     private val HELP = """
         🤖 ReelPilot commands
 
-        /list — queue with upload times + links
+        /list — queue: caption, upload time, link
         /status — next upload, counts, interval
         /remove 2 — remove video #2 from queue
+        /regenerate 2 — generate a fresh caption for #2
         /clear — remove all waiting videos
         /time 2 17:30 — change upload time of #2
         /postnow — post the next video immediately
