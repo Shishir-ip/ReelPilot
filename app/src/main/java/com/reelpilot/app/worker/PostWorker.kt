@@ -20,7 +20,7 @@ import com.reelpilot.app.accessibility.ReelAccessibilityService
 import com.reelpilot.app.data.AppDatabase
 import com.reelpilot.app.data.SettingsRepo
 import com.reelpilot.app.data.Status
-import com.reelpilot.app.telegram.TelegramClient
+import com.reelpilot.app.telegram.NotifyOutbox
 import com.reelpilot.app.telegram.TelegramIngest
 import com.reelpilot.app.util.AppLog
 import kotlinx.coroutines.CompletableDeferred
@@ -164,10 +164,10 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 if (pending.isEmpty()) {
                     // Everything already posted (e.g. targets changed mid-way).
                     dao.markPosted(item.id, System.currentTimeMillis())
+                    NotifyOutbox.enqueue(ctx, item.chatId, "✅ Already posted to all apps: ${item.title}")
                     return
                 }
 
-                val client = TelegramClient(settings.botToken)
                 val failures = mutableListOf<String>()
                 for (pkg in pending) {
                     // Re-read so a caption that finished generating after this
@@ -177,7 +177,8 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     if (!isAppInstalled(ctx, pkg)) {
                         failures.add("$label (not installed)")
                         AppLog.log("POST", "Skipping $label — not installed")
-                        client.sendMessage(
+                        NotifyOutbox.enqueue(
+                            ctx,
                             item.chatId,
                             "⚠️ $label is not installed on this phone — skipping it and continuing with the other apps.\nInstall it (and log in once), then tap ↻ Retry on this item."
                         )
@@ -190,7 +191,8 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     if (needsFlow && !SettingsRepo.hasRecordedFlow(settings, pkg)) {
                         failures.add("$label (no flow)")
                         AppLog.log("POST", "Skipping $label — no recorded flow")
-                        client.sendMessage(
+                        NotifyOutbox.enqueue(
+                            ctx,
                             item.chatId,
                             "⚠️ No recorded flow for $label — skipping it and continuing with the other apps.\nOpen ReelPilot → Settings → Post to apps → record a flow for it, then retry."
                         )
@@ -218,7 +220,8 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     }
                     if (result == null) {
                         failures.add("$label (interrupted)")
-                        client.sendMessage(
+                        NotifyOutbox.enqueue(
+                            ctx,
                             item.chatId,
                             "⚠️ Posting to $label was interrupted (screen closed or app killed) — skipping it and continuing with the other apps.\nTap ↻ Retry later to try it again."
                         )
@@ -231,10 +234,11 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     if (ok) {
                         done.add(pkg)
                         dao.setDoneTargets(item.id, done.joinToString(","))
-                        client.sendMessage(item.chatId, "🚀 Posted to $label: ${item.title}")
+                        NotifyOutbox.enqueue(ctx, item.chatId, "🚀 Posted to $label: ${item.title}")
                     } else {
                         failures.add("$label: ${msg.take(120)}")
-                        client.sendMessage(
+                        NotifyOutbox.enqueue(
+                            ctx,
                             item.chatId,
                             "⚠️ Posting to $label failed: $msg\nSkipping it and continuing with the remaining apps."
                         )
@@ -250,7 +254,8 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     // All targets done — the item is fully posted.
                     dao.markPosted(item.id, System.currentTimeMillis())
                     val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nextAt))
-                    client.sendMessage(
+                    NotifyOutbox.enqueue(
+                        ctx,
                         item.chatId,
                         "✅ Posted to all ${done.size} app(s): ${item.title}\n⏰ Next reel at $hhmm"
                     )
@@ -258,7 +263,8 @@ class PostWorker(context: Context, params: WorkerParameters) :
                     // Some apps failed — keep the successes, mark the item
                     // FAILED so ↻ Retry resumes with only the failed apps.
                     dao.markFailed(item.id, ("Failed: " + failures.joinToString("; ")).take(280))
-                    client.sendMessage(
+                    NotifyOutbox.enqueue(
+                        ctx,
                         item.chatId,
                         "⚠️ Posted to ${done.size}/${targets.size} app(s): ${item.title}\nFailed: ${failures.joinToString("; ")}\nTap ↻ Retry in the app Queue — it retries only the failed apps."
                     )

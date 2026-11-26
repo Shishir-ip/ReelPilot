@@ -53,11 +53,12 @@ class TelegramClient(private val token: String) {
         }
     }
 
-    suspend fun sendMessage(chatId: Long, text: String) = try {
+    suspend fun sendMessage(chatId: Long, text: String): Boolean = try {
         api("sendMessage", JSONObject().put("chat_id", chatId).put("text", text))
-        Unit
+        true
     } catch (e: Exception) {
         AppLog.log("TG", "sendMessage failed: ${e.message}")
+        false
     }
 
     suspend fun validate(): String {

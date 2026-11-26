@@ -63,6 +63,14 @@ class TgPollService : Service() {
             } catch (e: Exception) {
                 AppLog.log("TG", "pollLoop error: ${e.message}")
             }
+            // Deliver any post-result notifications the worker could not send
+            // (process killed mid-send, network hiccup, Doze…). Retried every
+            // cycle until Telegram accepts them.
+            try {
+                NotifyOutbox.flush(this)
+            } catch (e: Exception) {
+                AppLog.log("TG", "outbox flush error: ${e.message}")
+            }
             delay(3000)
         }
     }
