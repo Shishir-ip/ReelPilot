@@ -142,6 +142,14 @@ interface QueueDao {
     suspend fun retry(id: Long)
 
     /**
+     * Rebuild one item's place in the queue: back to READY with a fresh slot,
+     * app-post progress wiped (it will post to ALL target apps again) and any
+     * error cleared. Used by the Reconstruct button.
+     */
+    @Query("UPDATE queue SET status = 'READY', doneTargets = '', error = NULL, progress = 100, postAt = :postAt WHERE id = :id")
+    suspend fun reconstructItem(id: Long, postAt: Long)
+
+    /**
      * Only runCheck sets POSTING, and it is serialized by its busy lock.
      * So any POSTING row seen at the start of a check is an orphan from a
      * killed/crashed attempt — put it back to READY (keeping postAt and
