@@ -25,6 +25,7 @@ class ReelAccessibilityService : AccessibilityService() {
 
     companion object {
         const val INSTAGRAM_PACKAGE = "com.instagram.android"
+        const val FACEBOOK_PACKAGE = "com.facebook.katana"
 
         @Volatile
         var instance: ReelAccessibilityService? = null
@@ -71,6 +72,25 @@ class ReelAccessibilityService : AccessibilityService() {
 
     private fun root(): AccessibilityNodeInfo? = rootInActiveWindow
 
+    /**
+     * Full physical screen size (including the navigation-bar area).
+     * resources.displayMetrics can exclude system bars, which made recorder
+     * markers stop short of bottom-edge buttons like Instagram's Next.
+     * Recording and replay both use this so coordinates always match.
+     */
+    private fun realSize(): Pair<Int, Int> {
+        val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        return if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val b = wm.currentWindowMetrics.bounds
+            b.width() to b.height()
+        } else {
+            val m = android.util.DisplayMetrics()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealMetrics(m)
+            m.widthPixels to m.heightPixels
+        }
+    }
+
     private fun collectNodes(node: AccessibilityNodeInfo, out: MutableList<AccessibilityNodeInfo>, depth: Int) {
         if (depth > 40 || out.size > 800) return
         out.add(node)
@@ -98,6 +118,13 @@ class ReelAccessibilityService : AccessibilityService() {
         val t = node.text?.toString()?.trim()?.lowercase() ?: ""
         val d = node.contentDescription?.toString()?.trim()?.lowercase() ?: ""
         return words.any { t == it || d == it }
+    }
+
+    /** A clickable node whose text/desc is exactly one of the words. */
+    private fun exactClickable(root: AccessibilityNodeInfo, words: List<String>): AccessibilityNodeInfo? {
+        val all = mutableListOf<AccessibilityNodeInfo>()
+        collectNodes(root, all, 0)
+        return all.firstOrNull { it.isClickable && exactWords(it, words) }
     }
 
     /**
@@ -249,27 +276,42 @@ class ReelAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * After tapping Share, decide what happened:
-     *  "confirmed" → "Your reel has been shared" style message seen
-     *  "gone"      → the composer closed (Share button / "New reel" title vanished)
+     * After tapping Share/Post, decide what happened:
+     *  "confirmed" → "Your post/reel has been shared" style message seen
+     *  "gone"      → the composer closed (button + caption field vanished)
      *  "still"     → still sitting on the share screen → tap needs a retry
      */
-    private suspend fun waitShareResult(timeoutMs: Long): String {
+    private suspend fun waitShareResult(timeoutMs: Long, pkg: String): String {
         val deadline = System.currentTimeMillis() + timeoutMs
+        // Facebook's final button is "POST"; Instagram's is "Share".
+        val composerButtons = if (pkg == FACEBOOK_PACKAGE) listOf("next", "post") else listOf("next", "share")
         while (System.currentTimeMillis() < deadline) {
             root()?.let { r ->
                 if (findText(
                         r,
-                        listOf("your reel", "your post", "reel shared", "shared to your", "has been shared", "sharing to")
+                        listOf(
+                            "your reel", "your post", "reel shared", "shared to your",
+                            "has been shared", "sharing to", "is now live",
+                            "thanks for posting", "post shared", "your video"
+                        )
                     ) != null
                 ) return "confirmed"
-                if (findIn(r, listOf("share"), idWords = listOf("share")) == null &&
-                    findText(r, listOf("new reel")) == null
+                if (exactClickable(r, composerButtons) == null &&
+                    findEditable() == null &&
+                    findText(r, listOf("new reel", "create post")) == null
                 ) return "gone"
             }
             delay(2000)
         }
         return "still"
+    }
+
+    /** Is a composer screen still on top? Used to decide whether a retry makes sense. */
+    private fun composerPresent(): Boolean {
+        val r = root() ?: return false
+        if (findEditable() != null) return true
+        if (exactClickable(r, listOf("post", "next")) != null) return true
+        return findText(r, listOf("new reel", "create post", "write a caption", "add a caption")) != null
     }
 
     /**
@@ -294,6 +336,9 @@ class ReelAccessibilityService : AccessibilityService() {
                 val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
                 val dm = resources.displayMetrics
                 val density = dm.density
+                // Full physical screen (incl. nav-bar area) so markers can be
+                // dragged onto bottom-edge buttons like Instagram's Next.
+                val (screenW, screenH) = realSize()
                 fun dp(v: Int): Int = (v * density).toInt()
                 fun rounded(color: Long, radiusDp: Float) =
                     android.graphics.drawable.GradientDrawable().apply {
@@ -312,7 +357,8 @@ class ReelAccessibilityService : AccessibilityService() {
                     android.view.WindowManager.LayoutParams().apply {
                         type = android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
                         flags = android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                            android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            android.view.WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                            android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                         format = android.graphics.PixelFormat.TRANSLUCENT
                         width = android.view.WindowManager.LayoutParams.WRAP_CONTENT
                         height = android.view.WindowManager.LayoutParams.WRAP_CONTENT
@@ -375,8 +421,8 @@ class ReelAccessibilityService : AccessibilityService() {
                         elevation = dp(6).toFloat()
                     }
                     val lp = overlayParams().apply {
-                        x = dm.widthPixels / 2 - dp(60)
-                        y = dm.heightPixels / 2
+                        x = screenW / 2 - dp(60)
+                        y = screenH / 2
                     }
                     var downX = 0f; var downY = 0f; var baseX = 0; var baseY = 0
                     tv.setOnTouchListener { v, ev ->
@@ -388,12 +434,13 @@ class ReelAccessibilityService : AccessibilityService() {
                                 true
                             }
                             android.view.MotionEvent.ACTION_MOVE -> {
-                                // Reach the whole screen — Instagram's Next/Share
-                                // buttons sit at the very bottom edge.
+                                // Reach the whole physical screen — Instagram's
+                                // Next/Share buttons sit at the very bottom edge,
+                                // inside the navigation-bar area.
                                 lp.x = (baseX + (ev.rawX - downX)).toInt()
-                                    .coerceIn(-dp(10), dm.widthPixels - dp(40))
+                                    .coerceIn(-dp(10), screenW - dp(40))
                                 lp.y = (baseY + (ev.rawY - downY)).toInt()
-                                    .coerceIn(-dp(10), dm.heightPixels - dp(24))
+                                    .coerceIn(-dp(10), screenH - dp(8))
                                 wm.updateViewLayout(v, lp)
                                 true
                             }
@@ -419,15 +466,20 @@ class ReelAccessibilityService : AccessibilityService() {
                         val steps = markers.map { (v, lp, isText) ->
                             com.reelpilot.app.util.FlowStep(
                                 isText,
-                                ((lp.x + (v.measuredWidth.takeIf { it > 0 } ?: dp(60)) / 2f) / dm.widthPixels)
+                                ((lp.x + (v.measuredWidth.takeIf { it > 0 } ?: dp(60)) / 2f) / screenW)
                                     .coerceIn(0f, 0.995f),
-                                ((lp.y + (v.measuredHeight.takeIf { it > 0 } ?: dp(46)) / 2f) / dm.heightPixels)
+                                ((lp.y + (v.measuredHeight.takeIf { it > 0 } ?: dp(46)) / 2f) / screenH)
                                     .coerceIn(0f, 0.995f)
                             )
                         }
                         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             val repo = com.reelpilot.app.data.SettingsRepo.get(applicationContext)
                             repo.setFlow(target, steps)
+                            if (target == INSTAGRAM_PACKAGE || target == FACEBOOK_PACKAGE) {
+                                // A fresh recording is meant to be used — select it.
+                                // The Settings toggle can switch back to built-in.
+                                repo.setFlowMode(target, "manual")
+                            }
                             if (target == INSTAGRAM_PACKAGE) {
                                 // Keep the legacy manual-flow keys in sync
                                 repo.setManualSteps(org.json.JSONArray().apply {
@@ -462,12 +514,14 @@ class ReelAccessibilityService : AccessibilityService() {
     // -------------------------------------------------------------- flow
 
     /**
-     * Instagram (or a target with a recorded flow) has been started via a
-     * share intent that already contains the video. Walk the remaining
-     * composer screens and share it as a reel.
+     * Instagram/Facebook has been started via a share intent that already
+     * contains the video. Posts it as a FEED post: if the app shows its
+     * destination chooser (Feed / Reels / Stories / Your groups…), "Feed" is
+     * selected automatically, then the composer is driven to completion.
+     * A recorded flow in "manual" mode replays the user's taps instead.
      * Returns (success, message).
      */
-    suspend fun postReel(caption: String, pkg: String = INSTAGRAM_PACKAGE): Pair<Boolean, String> = withContext(Dispatchers.Default) {
+    suspend fun postBuiltIn(caption: String, pkg: String = INSTAGRAM_PACKAGE): Pair<Boolean, String> = withContext(Dispatchers.Default) {
         try {
             val t = com.reelpilot.app.data.SettingsRepo.get(applicationContext).current()
             step("Waiting for the target app ($pkg) to open…")
@@ -483,10 +537,10 @@ class ReelAccessibilityService : AccessibilityService() {
             var shareResult = "still"
             if (steps.isNotEmpty()) {
                 step("Manual flow: replaying ${steps.size} recorded steps")
-                delay(5000)  // let the reels upload section finish loading
-                val dm = resources.displayMetrics
+                delay(5000)  // let the upload section finish loading
+                val (w, h) = realSize()
                 for ((i, s) in steps.withIndex()) {
-                    tapAt(s.x * dm.widthPixels, s.y * dm.heightPixels)
+                    tapAt(s.x * w, s.y * h)
                     if (s.isText) {
                         delay(1200)  // let the field take focus
                         val typed = typeIntoFocused(caption)
@@ -496,88 +550,90 @@ class ReelAccessibilityService : AccessibilityService() {
                     }
                     delay(t.manualStepDelaySec * 1000L)
                 }
-                shareResult = waitShareResult(90_000)
+                shareResult = waitShareResult(90_000, pkg)
             } else {
-                // 1) Share sheet → tap "Reels" (some builds open the editor directly)
-                val reelOption = waitFor(
-                    words = listOf("reel", "reels"),
-                    timeoutMs = 20_000,
-                    step = "share sheet Reels option"
+                // 1) Destination chooser → tap "Feed" so the post goes to the
+                //    feed directly (FB: Your groups/Feed/Reels/Your story;
+                //    IG: Messages/Feed/Stories/Reels). Some builds skip it.
+                val feedOption = waitFor(
+                    words = listOf("feed"),
+                    timeoutMs = 15_000,
+                    step = "share destination Feed"
                 )
-                if (reelOption != null) {
-                    step("Tapping Reels")
-                    tap(reelOption)
+                if (feedOption != null) {
+                    step("Selecting Feed")
+                    tap(feedOption)
                     delay(2500)
                 } else {
-                    step("No share sheet — assuming editor opened directly")
+                    step("No destination chooser — composer opened directly")
                 }
 
-                // 2) Clip preview screen → Next (cold starts load slowly — be patient)
-                val next = waitFor(words = listOf("next"), idWords = listOf("next"), timeoutMs = t.nextWaitSec * 1000L, step = "Next button")
-                    ?: return@withContext Pair(false, "Could not find the Next button — Instagram UI may have changed.")
-                step("Tapping Next")
-                tap(next)
-                delay(3000)
-
-                // 3) Final share screen: caption + Share button
+                // 2) Type the caption here if this screen already has the
+                //    field (Facebook's composer shows it before Next).
+                var captionTyped = false
                 if (caption.isNotBlank()) {
-                    var edit = findEditable()
-                    if (edit == null) {
-                        // Caption might be behind an "Add a caption" button
-                        root()?.let { r ->
-                            findText(r, listOf("add a caption", "write a caption", "caption"))?.let {
-                                tap(it)
-                                delay(1200)
-                            }
-                        }
-                        edit = findEditable()
-                    }
-                    if (edit != null) {
-                        step("Typing caption")
-                        setText(edit, caption)
-                        delay(800)
-                        // Close caption sheet if one opened (Done / ✓ button)
-                        root()?.let { r ->
-                            findIn(r, listOf("done"), idWords = listOf("done", "primary_button"))?.let {
-                                tap(it)
-                                delay(800)
-                            }
-                        }
-                    } else {
-                        step("No caption field found — posting without caption")
-                    }
+                    captionTyped = typeCaption(caption)
                 }
 
-                // 3.5) Make sure the bottom bar (Share button) is on screen
+                // 3) Trim/preview screen → Next (cold starts load slowly).
+                val next = waitFor(words = listOf("next"), idWords = listOf("next"), timeoutMs = t.nextWaitSec * 1000L, step = "Next button")
+                if (next != null) {
+                    step("Tapping Next")
+                    tap(next)
+                    delay(3000)
+                } else {
+                    step("No Next button — assuming final share screen")
+                }
+
+                // 4) Caption on the final screen (Instagram's caption box).
+                if (caption.isNotBlank() && !captionTyped) {
+                    typeCaption(caption)
+                }
+
+                // 4.5) Facebook: caption screen → NEXT → the final Post screen.
+                val next2 = waitFor(words = listOf("next"), idWords = listOf("next"), timeoutMs = 8_000, step = "second Next")
+                if (next2 != null) {
+                    step("Tapping Next (post screen)")
+                    tap(next2)
+                    delay(2500)
+                }
+
+                // 5) Make sure the bottom bar (Share/Post button) is on screen
                 swipeUp()
 
-                // 4) Tap Share, verify it actually went through, retry up to 3 times.
+                // 6) Tap Share/Post, verify it went through, retry up to 3 times.
                 var attempts = 0
                 while (attempts < 3) {
                     val share = waitFor(
-                        words = listOf("share"),
-                        idWords = listOf("share"),
+                        words = listOf("share", "post"),
+                        idWords = listOf("share", "post"),
                         timeoutMs = t.shareWaitSec * 1000L,
-                        step = "Share button"
+                        step = "Share/Post button"
                     )
                     if (share == null) {
                         if (attempts > 0) {
-                            // Share button vanished after we already tapped — upload in progress
+                            // Button vanished after we already tapped — upload in progress
                             shareResult = "gone"
                             break
                         }
-                        return@withContext Pair(false, "Could not find the Share button — Instagram UI may have changed.")
+                        return@withContext Pair(false, "Could not find the Share/Post button — the app UI may have changed.")
                     }
-                    step("Tapping Share (attempt ${attempts + 1})")
+                    step("Tapping Share/Post (attempt ${attempts + 1})")
                     tap(share)
                     delay(3000)
-                    shareResult = waitShareResult(60_000)
+                    shareResult = waitShareResult(60_000, pkg)
                     if (shareResult != "still") break
                     attempts++
+                    // Only retry while a composer is actually still on screen —
+                    // never tap random Share buttons on the feed.
+                    if (!composerPresent()) {
+                        shareResult = "gone"
+                        break
+                    }
                     swipeUp()
                 }
             }
-            AppLog.log("IG", "postReel finished, shareResult=$shareResult")
+            AppLog.log("IG", "postBuiltIn($pkg) finished, shareResult=$shareResult")
             // Leave the app's UI immediately…
             home()
             // …but do NOT kill the process yet: the upload keeps running in
@@ -588,13 +644,45 @@ class ReelAccessibilityService : AccessibilityService() {
             killApp(pkg)
             return@withContext when (shareResult) {
                 "confirmed", "gone" -> Pair(true, "Posted successfully")
-                else -> Pair(false, "Share button did not complete — check the Logs tab and retry from the Queue")
+                else -> Pair(false, "Share/Post button did not complete — check the Logs tab and retry from the Queue")
             }
         } catch (e: Exception) {
             home()
-            AppLog.log("IG", "postReel error: ${e.message}")
+            AppLog.log("IG", "postBuiltIn error: ${e.message}")
             Pair(false, "Automation error: ${e.message?.take(200)}")
         }
+    }
+
+    /**
+     * Types the caption into the composer's caption field, opening the
+     * "Add a caption" sheet first if needed. Returns true when typed.
+     */
+    private suspend fun typeCaption(caption: String): Boolean {
+        var edit = findEditable()
+        if (edit == null) {
+            root()?.let { r ->
+                findText(r, listOf("add a caption", "write a caption", "write something", "say something", "caption"))?.let {
+                    tap(it)
+                    delay(1200)
+                }
+            }
+            edit = findEditable()
+        }
+        if (edit != null) {
+            step("Typing caption")
+            setText(edit, caption)
+            delay(800)
+            // Close the caption sheet if one opened (Done / ✓ button)
+            root()?.let { r ->
+                findIn(r, listOf("done"), idWords = listOf("done", "primary_button"))?.let {
+                    tap(it)
+                    delay(800)
+                }
+            }
+            return true
+        }
+        step("No caption field on this screen")
+        return false
     }
 
     /**
@@ -614,9 +702,9 @@ class ReelAccessibilityService : AccessibilityService() {
             }
             step("Replaying recorded flow: ${steps.size} steps")
             delay(5000)  // let the app's composer finish loading
-            val dm = resources.displayMetrics
+            val (w, h) = realSize()
             for ((i, s) in steps.withIndex()) {
-                tapAt(s.x * dm.widthPixels, s.y * dm.heightPixels)
+                tapAt(s.x * w, s.y * h)
                 if (s.isText) {
                     delay(1200)  // let the field take focus
                     val typed = typeIntoFocused(caption)
@@ -643,13 +731,20 @@ class ReelAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Recorded steps for a target: explicit flow first, legacy IG manual flow second. */
+    /**
+     * Recorded steps for a target. Apps without a built-in always replay
+     * their flow; Instagram/Facebook only when their mode is "manual".
+     */
     private fun recordedFlowFor(pkg: String, t: com.reelpilot.app.data.AppSettings): List<com.reelpilot.app.util.FlowStep> {
-        val flows = com.reelpilot.app.data.SettingsRepo.parseFlows(t.flows)
-        if (flows.containsKey(pkg)) return flows[pkg]!!
-        if (pkg == INSTAGRAM_PACKAGE && t.manualFlow) {
-            return parseManualSteps(t.manualSteps)
-                .map { com.reelpilot.app.util.FlowStep(false, it[0], it[1]) }
+        val repo = com.reelpilot.app.data.SettingsRepo
+        val wantsManual = !repo.hasBuiltIn(pkg) || repo.flowModeFor(t, pkg) == "manual"
+        if (wantsManual) {
+            val flows = repo.parseFlows(t.flows)
+            if (flows.containsKey(pkg)) return flows[pkg]!!
+            if (pkg == INSTAGRAM_PACKAGE && t.manualFlow) {
+                return parseManualSteps(t.manualSteps)
+                    .map { com.reelpilot.app.util.FlowStep(false, it[0], it[1]) }
+            }
         }
         return emptyList()
     }

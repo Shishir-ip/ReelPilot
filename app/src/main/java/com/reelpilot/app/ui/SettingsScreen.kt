@@ -189,7 +189,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Post to apps", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "The same video is posted to every selected app, one after another. Instagram has built-in automation; other apps need a recorded tap flow (auto-clicker style).",
+                    "The same video is posted to every selected app, one after another — a failed app is skipped and the rest still post. Instagram and Facebook have built-in automation (posts as Feed); other apps need a recorded tap flow (auto-clicker style).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -216,29 +216,57 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}) {
 
                 known.forEach { (pkg, label) ->
                     val installed = isInstalled(pkg)
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Checkbox(
-                            checked = pkg in selected,
-                            onCheckedChange = { on ->
-                                if (on) selected.add(pkg) else if (selected.size > 1) selected.remove(pkg)
-                                scope.launch { SettingsRepo.get(context).setTargets(rebuildCsv()) }
-                            },
-                            enabled = installed
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(label + if (installed) "" else " (not installed)", style = MaterialTheme.typography.bodyLarge)
-                            val hasFlow = flows.containsKey(pkg) ||
-                                (pkg == "com.instagram.android" && settings.manualFlow && settings.manualSteps.isNotBlank())
-                            Text(
-                                when {
-                                    pkg == "com.instagram.android" && !hasFlow -> "Built-in automation ✓"
-                                    hasFlow -> "Recorded flow (${flows[pkg]?.size ?: settings.manualSteps.count { it == '[' } - 1} steps)"
-                                    else -> "Record a flow to enable posting"
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Checkbox(
+                                checked = pkg in selected,
+                                onCheckedChange = { on ->
+                                    if (on) selected.add(pkg) else if (selected.size > 1) selected.remove(pkg)
+                                    scope.launch { SettingsRepo.get(context).setTargets(rebuildCsv()) }
                                 },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (hasFlow || pkg == "com.instagram.android") MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.error
+                                enabled = installed
                             )
+                            Column(Modifier.weight(1f)) {
+                                Text(label + if (installed) "" else " (not installed)", style = MaterialTheme.typography.bodyLarge)
+                                val hasFlow = SettingsRepo.hasRecordedFlow(settings, pkg)
+                                val mode = SettingsRepo.flowModeFor(settings, pkg)
+                                val stepCount = flows[pkg]?.size ?: settings.manualSteps.count { it == '[' } - 1
+                                Text(
+                                    when {
+                                        SettingsRepo.hasBuiltIn(pkg) && mode == "builtin" -> "Built-in automation ✓ (posts as Feed)"
+                                        SettingsRepo.hasBuiltIn(pkg) && hasFlow -> "Manual flow ($stepCount steps)"
+                                        SettingsRepo.hasBuiltIn(pkg) -> "Manual selected — record a flow below"
+                                        hasFlow -> "Recorded flow ($stepCount steps)"
+                                        else -> "Record a flow to enable posting"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (hasFlow || (SettingsRepo.hasBuiltIn(pkg) && mode == "builtin")) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                        // Built-in vs manual choice for Instagram & Facebook
+                        if (SettingsRepo.hasBuiltIn(pkg)) {
+                            val hasFlow = SettingsRepo.hasRecordedFlow(settings, pkg)
+                            val mode = SettingsRepo.flowModeFor(settings, pkg)
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.padding(start = 48.dp)
+                            ) {
+                                FilterChip(
+                                    selected = mode == "builtin",
+                                    onClick = { scope.launch { SettingsRepo.get(context).setFlowMode(pkg, "builtin") } },
+                                    label = { Text("Built-in") }
+                                )
+                                FilterChip(
+                                    selected = mode == "manual",
+                                    onClick = {
+                                        if (hasFlow) scope.launch { SettingsRepo.get(context).setFlowMode(pkg, "manual") }
+                                        else toast("Record a flow for $label first (below)")
+                                    },
+                                    label = { Text("Manual flow" + if (hasFlow) " ✓" else "") }
+                                )
+                            }
                         }
                     }
                 }
@@ -302,7 +330,7 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}) {
                 HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
                 Text("Flows", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "Each selected app (other than Instagram) needs a recorded flow. Pick a short video from the gallery as material, then record: the app opens that app, shares the video, and you position the tap markers.",
+                    "Apps without built-in automation need a recorded flow (Instagram/Facebook only if set to Manual above). Pick a short video from the gallery as material, then record: the app opens that app, shares the video, and you position the tap markers — they can reach the very bottom of the screen.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -360,6 +388,29 @@ fun SettingsScreen(onOpenLogs: () -> Unit = {}) {
                         "🎙 Start recorder" + (recordTarget?.let { " for " + com.reelpilot.app.worker.PostWorker.appLabel(context, it) } ?: ""),
                         maxLines = 1
                     )
+                }
+                val delTarget = recordTarget
+                if (delTarget != null && SettingsRepo.hasRecordedFlow(settings, delTarget)) {
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                val repo = SettingsRepo.get(context)
+                                repo.clearFlow(delTarget)
+                                if (delTarget == SettingsRepo.INSTAGRAM) {
+                                    repo.setManualFlow(false)
+                                    repo.setManualSteps("")
+                                }
+                                if (SettingsRepo.hasBuiltIn(delTarget)) repo.setFlowMode(delTarget, "builtin")
+                                toast(
+                                    "Flow deleted" +
+                                        if (SettingsRepo.hasBuiltIn(delTarget)) " — using built-in automation again" else ""
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("🗑 Delete recorded flow for " + com.reelpilot.app.worker.PostWorker.appLabel(context, delTarget), maxLines = 1)
+                    }
                 }
                 HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f))
                 Text("Test a flow", style = MaterialTheme.typography.titleSmall)

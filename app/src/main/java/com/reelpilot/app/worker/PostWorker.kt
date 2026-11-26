@@ -168,29 +168,33 @@ class PostWorker(context: Context, params: WorkerParameters) :
                 }
 
                 val client = TelegramClient(settings.botToken)
+                val failures = mutableListOf<String>()
                 for (pkg in pending) {
                     // Re-read so a caption that finished generating after this
                     // check started is still picked up for the next app.
                     item = dao.byId(item.id) ?: return
                     val label = appLabel(ctx, pkg)
                     if (!isAppInstalled(ctx, pkg)) {
-                        dao.markFailed(item.id, "App $label not installed")
+                        failures.add("$label (not installed)")
+                        AppLog.log("POST", "Skipping $label — not installed")
                         client.sendMessage(
                             item.chatId,
-                            "❌ $label is not installed on this phone.\nInstall it (and log in once), then tap ↻ Retry on this item in the app's Queue tab."
+                            "⚠️ $label is not installed on this phone — skipping it and continuing with the other apps.\nInstall it (and log in once), then tap ↻ Retry on this item."
                         )
-                        return
+                        continue
                     }
-                    // Non-Instagram targets need a recorded flow.
-                    if (pkg != SettingsRepo.INSTAGRAM &&
-                        !SettingsRepo.parseFlows(settings.flows).containsKey(pkg)
-                    ) {
-                        dao.markFailed(item.id, "No recorded flow for $label")
+                    // Apps without built-in automation need a recorded flow;
+                    // Instagram/Facebook need one only in "manual" mode.
+                    val needsFlow = !SettingsRepo.hasBuiltIn(pkg) ||
+                        SettingsRepo.flowModeFor(settings, pkg) == "manual"
+                    if (needsFlow && !SettingsRepo.hasRecordedFlow(settings, pkg)) {
+                        failures.add("$label (no flow)")
+                        AppLog.log("POST", "Skipping $label — no recorded flow")
                         client.sendMessage(
                             item.chatId,
-                            "⚠️ No recorded flow for $label.\nOpen ReelPilot → Settings → Post to apps → record a flow for it, then retry."
+                            "⚠️ No recorded flow for $label — skipping it and continuing with the other apps.\nOpen ReelPilot → Settings → Post to apps → record a flow for it, then retry."
                         )
-                        return
+                        continue
                     }
 
                     dao.setStatus(item.id, Status.POSTING)
@@ -213,13 +217,13 @@ class PostWorker(context: Context, params: WorkerParameters) :
                         resultDeferred!!.await()
                     }
                     if (result == null) {
-                        dao.markFailed(item.id, "$label: posting screen closed before finishing")
+                        failures.add("$label (interrupted)")
                         client.sendMessage(
                             item.chatId,
-                            "⚠️ Posting to $label was interrupted (screen closed or app killed).\nTap ↻ Retry on this item in the Queue tab — it resumes with the remaining apps."
+                            "⚠️ Posting to $label was interrupted (screen closed or app killed) — skipping it and continuing with the other apps.\nTap ↻ Retry later to try it again."
                         )
-                        AppLog.log("POST", "Timed out waiting for $label result — item marked FAILED, lock released")
-                        return
+                        AppLog.log("POST", "Timed out waiting for $label result — skipping, lock stays held until all apps are tried")
+                        continue
                     }
                     val (ok, msg) = result
                     AppLog.log("POST", "Result for $label: ok=$ok, $msg")
@@ -229,27 +233,36 @@ class PostWorker(context: Context, params: WorkerParameters) :
                         dao.setDoneTargets(item.id, done.joinToString(","))
                         client.sendMessage(item.chatId, "🚀 Posted to $label: ${item.title}")
                     } else {
-                        dao.markFailed(item.id, "$label: ${msg.take(280)}")
-                        // Advance the schedule anyway so failures don't retry in a tight loop.
-                        val nextAt = System.currentTimeMillis() + settings.intervalHours * 60 * 60 * 1000L
-                        SettingsRepo.get(ctx).setNextPostAt(nextAt)
+                        failures.add("$label: ${msg.take(120)}")
                         client.sendMessage(
                             item.chatId,
-                            "⚠️ Posting to $label failed: $msg\nAlready posted: ${done.size}/${targets.size} app(s). Retry from the app queue — it resumes with the remaining apps."
+                            "⚠️ Posting to $label failed: $msg\nSkipping it and continuing with the remaining apps."
                         )
-                        return
                     }
+                    // Let the previous app settle before opening the next one.
+                    kotlinx.coroutines.delay(3000)
                 }
 
-                // All targets done — the item is fully posted.
-                dao.markPosted(item.id, System.currentTimeMillis())
+                // Advance the schedule so failures don't retry in a tight loop.
                 val nextAt = System.currentTimeMillis() + settings.intervalHours * 60 * 60 * 1000L
                 SettingsRepo.get(ctx).setNextPostAt(nextAt)
-                val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nextAt))
-                client.sendMessage(
-                    item.chatId,
-                    "✅ Posted to all ${done.size} app(s): ${item.title}\n⏰ Next reel at $hhmm"
-                )
+                if (failures.isEmpty()) {
+                    // All targets done — the item is fully posted.
+                    dao.markPosted(item.id, System.currentTimeMillis())
+                    val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nextAt))
+                    client.sendMessage(
+                        item.chatId,
+                        "✅ Posted to all ${done.size} app(s): ${item.title}\n⏰ Next reel at $hhmm"
+                    )
+                } else {
+                    // Some apps failed — keep the successes, mark the item
+                    // FAILED so ↻ Retry resumes with only the failed apps.
+                    dao.markFailed(item.id, ("Failed: " + failures.joinToString("; ")).take(280))
+                    client.sendMessage(
+                        item.chatId,
+                        "⚠️ Posted to ${done.size}/${targets.size} app(s): ${item.title}\nFailed: ${failures.joinToString("; ")}\nTap ↻ Retry in the app Queue — it retries only the failed apps."
+                    )
+                }
                 // Re-slot the remaining queue after this post.
                 QueueScheduler.reschedule(ctx)
             } finally {

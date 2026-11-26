@@ -153,8 +153,10 @@ class PostActivity : Activity() {
                 val svc = ReelAccessibilityService.instance
                 if (svc == null) {
                     Pair(false, "Accessibility service is not enabled")
-                } else if (target == ReelAccessibilityService.INSTAGRAM_PACKAGE) {
-                    svc.postReel(caption, target)
+                } else if (target == ReelAccessibilityService.INSTAGRAM_PACKAGE ||
+                    target == ReelAccessibilityService.FACEBOOK_PACKAGE
+                ) {
+                    svc.postBuiltIn(caption, target)
                 } else {
                     svc.postFlow(caption, target)
                 }

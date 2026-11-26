@@ -39,6 +39,7 @@ data class AppSettings(
     // Multi-app posting
     val targets: String = "com.instagram.android",  // CSV of target packages
     val flows: String = "",              // JSON {"pkg": [steps...]} recorded tap flows
+    val flowModes: String = "",          // JSON {"pkg":"builtin|manual"} for IG/FB
     // Captions (SocialKit generation + per-app rules)
     val captionApis: String = "",        // JSON [{"name","key","limit","used"}]
     val captionPrompt: String = "",      // blank = built-in default prompt
@@ -77,6 +78,7 @@ class SettingsRepo(private val context: Context) {
         val WATCH_FOLDER = stringPreferencesKey("watch_folder_uri")
         val TARGETS = stringPreferencesKey("targets")
         val FLOWS = stringPreferencesKey("flows")
+        val FLOW_MODES = stringPreferencesKey("flow_modes")
         val CAPTION_APIS = stringPreferencesKey("caption_apis")
         val CAPTION_PROMPT = stringPreferencesKey("caption_prompt")
         val CAPTION_RESPONSE_FIELD = stringPreferencesKey("caption_response_field")
@@ -114,6 +116,7 @@ class SettingsRepo(private val context: Context) {
             watchFolderUri = p[Keys.WATCH_FOLDER] ?: "",
             targets = p[Keys.TARGETS] ?: "com.instagram.android",
             flows = p[Keys.FLOWS] ?: "",
+            flowModes = p[Keys.FLOW_MODES] ?: "",
             captionApis = p[Keys.CAPTION_APIS] ?: "",
             captionPrompt = p[Keys.CAPTION_PROMPT] ?: "",
             captionResponseField = p[Keys.CAPTION_RESPONSE_FIELD] ?: "",
@@ -168,6 +171,15 @@ class SettingsRepo(private val context: Context) {
     suspend fun setWatchFolderUri(v: String) = context.dataStore.edit { it[Keys.WATCH_FOLDER] = v }
     suspend fun setTargets(csv: String) = context.dataStore.edit { it[Keys.TARGETS] = csv }
     suspend fun setFlows(json: String) = context.dataStore.edit { it[Keys.FLOWS] = json }
+
+    /** Choose built-in automation or the recorded flow for one app (IG/FB). */
+    suspend fun setFlowMode(pkg: String, mode: String) {
+        val map = parseStringMap(current().flowModes).toMutableMap()
+        map[pkg] = mode
+        val o = org.json.JSONObject()
+        map.forEach { (k, v) -> o.put(k, v) }
+        context.dataStore.edit { it[Keys.FLOW_MODES] = o.toString() }
+    }
     suspend fun setCaptionApis(json: String) = context.dataStore.edit { it[Keys.CAPTION_APIS] = json }
     suspend fun setCaptionPrompt(v: String) = context.dataStore.edit { it[Keys.CAPTION_PROMPT] = v }
     suspend fun setCaptionResponseField(v: String) = context.dataStore.edit { it[Keys.CAPTION_RESPONSE_FIELD] = v }
@@ -212,6 +224,27 @@ class SettingsRepo(private val context: Context) {
 
     companion object {
         const val INSTAGRAM = "com.instagram.android"
+        const val FACEBOOK = "com.facebook.katana"
+
+        /** Apps that have a built-in automation (no recorded flow needed). */
+        fun hasBuiltIn(pkg: String): Boolean = pkg == INSTAGRAM || pkg == FACEBOOK
+
+        /**
+         * Which automation an app uses: "builtin" or "manual" (recorded flow).
+         * Only meaningful for apps with a built-in; others always replay taps.
+         * Legacy Instagram manual-flow settings map to "manual" when unset.
+         */
+        fun flowModeFor(s: AppSettings, pkg: String): String {
+            val m = parseStringMap(s.flowModes)[pkg]
+            if (m == "builtin" || m == "manual") return m
+            if (pkg == INSTAGRAM && s.manualFlow && s.manualSteps.isNotBlank()) return "manual"
+            return "builtin"
+        }
+
+        /** Whether a recorded flow exists for the app (incl. legacy IG keys). */
+        fun hasRecordedFlow(s: AppSettings, pkg: String): Boolean =
+            parseFlows(s.flows).containsKey(pkg) ||
+                (pkg == INSTAGRAM && s.manualFlow && s.manualSteps.isNotBlank())
         val DEFAULT_PROMPT = "Based on the video transcript, write 1 short, catchy bangla caption in natural, conversational Bangla (not robotic or overly formal) that works across Reels, TikTok, and Shorts. Keep it 2–3 lines max with a strong hook, 1–2 emojis and 3 relevant hashtags."
 
         val DEFAULT_GEMINI_PROMPT = "Generate a catchy, scroll-stopping Bangla caption based on the video summary. Make it emotional, impactful and relatable. Keep it to 1–2 short sentences with exactly 2 relevant emojis and 3 relevant hashtags. Start with a strong hook. Return only the ready-to-post caption."
